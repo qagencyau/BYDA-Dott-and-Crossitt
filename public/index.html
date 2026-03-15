@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BYDA Enquiry Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Before You Dig Australia</p>
+          <h1>Enquiry Console</h1>
+          <p class="hero-copy">
+            Resolve an address, generate a work site polygon, lodge the enquiry, and track the
+            combined report from one place.
+          </p>
+        </div>
+        <div class="hero-meta">
+          <span id="modeBadge" class="mode-badge">Loading</span>
+          <p id="optionsSource" class="meta-note"></p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel panel-form">
+          <div class="section-heading">
+            <p class="section-kicker">Step 1</p>
+            <h2>Resolve Address</h2>
+          </div>
+
+          <form id="addressForm" class="stack">
+            <div class="grid two-up">
+              <label class="field">
+                <span>Street number</span>
+                <input name="streetNumber" required maxlength="20" />
+              </label>
+              <label class="field">
+                <span>Postcode</span>
+                <input name="postcode" inputmode="numeric" pattern="[0-9]{4}" required />
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Street name</span>
+              <input name="streetName" placeholder="Queen Street" required />
+            </label>
+
+            <div class="grid two-up">
+              <label class="field">
+                <span>Suburb</span>
+                <input name="suburb" required />
+              </label>
+              <label class="field">
+                <span>State</span>
+                <select name="state" required>
+                  <option value="NSW">NSW</option>
+                  <option value="QLD">QLD</option>
+                  <option value="VIC">VIC</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button id="searchAddressButton" class="button button-primary" type="button">
+                Search Address
+              </button>
+              <button id="loadTestCaseButton" class="button button-secondary" type="button">
+                Load UAT Test Case
+              </button>
+              <p class="form-note">
+                NSW, QLD, and VIC public datasets are wired. Pick the exact resolved address before
+                lodging.
+              </p>
+            </div>
+          </form>
+
+          <div id="addressFeedback" class="feedback" hidden></div>
+          <div id="candidateList" class="candidate-list"></div>
+
+          <div class="section-heading top-gap">
+            <p class="section-kicker">Step 2</p>
+            <h2>Prepare Enquiry</h2>
+          </div>
+
+          <form id="enquiryForm" class="stack">
+            <div class="grid two-up">
+              <label class="field">
+                <span>Start date</span>
+                <input name="digStartAt" type="date" required />
+              </label>
+              <label class="field">
+                <span>End date</span>
+                <input name="digEndAt" type="date" required />
+              </label>
+            </div>
+
+            <div class="grid two-up">
+              <label class="field">
+                <span>User reference</span>
+                <input name="userReference" maxlength="100" placeholder="Internal job number" />
+              </label>
+              <label class="toggle-field">
+                <span>Planning enquiry</span>
+                <input id="planningToggle" name="isPlanningJob" type="checkbox" />
+              </label>
+            </div>
+
+            <div class="choice-group">
+              <div class="choice-group-head">
+                <span>Activity types</span>
+                <small id="activityCaption"></small>
+              </div>
+              <div id="activityOptions" class="pill-grid"></div>
+            </div>
+
+            <div class="choice-group">
+              <div class="choice-group-head">
+                <span>Location type</span>
+              </div>
+              <div class="pill-grid">
+                <label class="pill-option">
+                  <input type="checkbox" name="locationTypes" value="Private" checked />
+                  <span>Private</span>
+                </label>
+                <label class="pill-option">
+                  <input type="checkbox" name="locationTypes" value="Road Reserve" />
+                  <span>Road Reserve</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="choice-group">
+              <div class="choice-group-head">
+                <span>Locations in road reserve</span>
+                <small>Only used when Road Reserve is selected</small>
+              </div>
+              <div class="pill-grid">
+                <label class="pill-option">
+                  <input type="checkbox" name="locationsInRoad" value="Road" />
+                  <span>Road</span>
+                </label>
+                <label class="pill-option">
+                  <input type="checkbox" name="locationsInRoad" value="Nature Strip" />
+                  <span>Nature Strip</span>
+                </label>
+                <label class="pill-option">
+                  <input type="checkbox" name="locationsInRoad" value="Footpath" />
+                  <span>Footpath</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="grid two-up">
+              <label class="field">
+                <span>Authority</span>
+                <select id="authoritySelect" name="authorityId">
+                  <option value="">Private / not selected</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Manual authority name</span>
+                <input
+                  id="manualAuthority"
+                  name="otherAuthorityName"
+                  maxlength="100"
+                  placeholder="Only if not in the list"
+                />
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Notes</span>
+              <textarea name="notes" rows="4" maxlength="500"></textarea>
+            </label>
+
+            <div class="actions">
+              <button id="dryRunEnquiryButton" class="button button-secondary" type="button">
+                Dry Run Enquiry
+              </button>
+              <button id="submitEnquiryButton" class="button button-primary" type="submit">
+                Lodge Enquiry
+              </button>
+              <p id="submitFeedback" class="form-note"></p>
+            </div>
+          </form>
+        </section>
+
+        <aside class="panel panel-status">
+          <div class="section-heading">
+            <p class="section-kicker">Tracking</p>
+            <h2>Status</h2>
+          </div>
+
+          <div class="stack compact">
+            <label class="field">
+              <span>Existing tracking token</span>
+              <div class="inline-field">
+                <input id="trackingTokenInput" placeholder="Paste a token" />
+                <button id="loadTrackingButton" class="button button-secondary" type="button">
+                  Load
+                </button>
+              </div>
+            </label>
+          </div>
+
+          <div id="selectedSiteCard" class="status-card muted">
+            <p class="status-label">Selected site</p>
+            <strong>No address selected yet.</strong>
+          </div>
+
+          <div id="statusCard" class="status-card">
+            <p class="status-label">Current state</p>
+            <strong>Idle</strong>
+            <p class="status-copy">Search an address and lodge an enquiry to start tracking.</p>
+          </div>
+
+          <dl id="statusDetails" class="status-details"></dl>
+
+          <div class="section-heading top-gap">
+            <p class="section-kicker">Connectivity</p>
+            <h2>Live Diagnostics</h2>
+          </div>
+
+          <div class="actions">
+            <button id="runDiagnosticsButton" class="button button-secondary" type="button">
+              Run Diagnostic
+            </button>
+            <p id="diagnosticsFeedback" class="form-note">
+              Validates BYDA auth and domain lookups. Organisation lookup uses the selected site if
+              available.
+            </p>
+          </div>
+
+          <div id="diagnosticsCard" class="status-card muted">
+            <p class="status-label">Diagnostic state</p>
+            <strong>Not run yet.</strong>
+            <p class="status-copy">Use this before switching from mock mode to live BYDA testing.</p>
+          </div>
+
+          <div id="diagnosticsChecks" class="diagnostic-checks"></div>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

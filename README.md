@@ -39,4 +39,4 @@ The diagnostic checks:
 - BYDA UAT and production should be treated as separate environments with separate keys.
 - The official BYDA article says the direct API `source` must be `API`, so the implementation submits that value for live lodgements.
 - Polling currently aims to produce a combined ZIP download URL. If that is not yet available, the app keeps the enquiry in a processing state and surfaces the BYDA share link when possible.
-- QLD attempts to upgrade the site geometry from a cadastral parcel polygon when the public ArcGIS data exposes a concrete lot/plan. NSW and VIC currently fall back to a small buffered polygon around the resolved point.
+- QLD, NSW, and VIC attempt to upgrade the site geometry from public cadastral parcel data. If a parcel lookup is unavailable, the app falls back to a small buffered polygon around the resolved point.

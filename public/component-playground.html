@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BYDA Component Playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/component-playground.css" />
+    <script src="/components/byda-components.js" defer></script>
+    <script type="module" src="/component-playground.js"></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero panel">
+        <div>
+          <p class="eyebrow">Web Component Starter</p>
+          <h1>One frontend component, multiple host environments.</h1>
+        </div>
+        <p class="hero-copy">
+          This starter uses a standard custom element so the same component can be dropped into
+          WordPress, React, Angular, or a plain HTML page without rewriting the view layer.
+        </p>
+      </header>
+
+      <main class="layout">
+        <aside class="panel controls">
+          <div class="preview-stack">
+            <div>
+              <p class="eyebrow">Controls</p>
+              <h2>Shape the API</h2>
+            </div>
+
+            <p class="section-copy">
+              These fields map directly to the component attributes. The body copy and action
+              buttons are passed in as slotted content from the host page.
+            </p>
+
+            <form id="playgroundControls" class="controls-form">
+              <label class="field">
+                <span>Eyebrow</span>
+                <input name="eyebrow" value="Reusable UI" />
+              </label>
+
+              <label class="field">
+                <span>Heading</span>
+                <input name="heading" value="Dial before you dig service review" />
+              </label>
+
+              <label class="field">
+                <span>Status</span>
+                <input name="status" value="Awaiting locates" />
+              </label>
+
+              <label class="field">
+                <span>Tone</span>
+                <select name="tone">
+                  <option value="active" selected>active</option>
+                  <option value="success">success</option>
+                  <option value="warning">warning</option>
+                  <option value="critical">critical</option>
+                  <option value="neutral">neutral</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Reference</span>
+                <input name="reference" value="REF-2041" />
+              </label>
+
+              <label class="field">
+                <span>Location</span>
+                <input name="location" value="48 Pirrama Rd, Pyrmont NSW" />
+              </label>
+
+              <label class="field">
+                <span>Updated at</span>
+                <input name="updatedAt" value="2026-03-30 09:15 AEDT" />
+              </label>
+
+              <label class="field">
+                <span>Description</span>
+                <input
+                  name="description"
+                  value="Starter card built as a Web Component so it stays portable across host apps."
+                />
+              </label>
+
+              <label class="field">
+                <span>Body content</span>
+                <textarea name="body">Use the default slot for richer supporting copy, tags, or mini layouts that belong to the host application.</textarea>
+              </label>
+            </form>
+          </div>
+        </aside>
+
+        <section class="panel preview">
+          <div class="preview-stack">
+            <div>
+              <p class="eyebrow">Preview</p>
+              <h2>Shared component surface</h2>
+            </div>
+
+            <byda-status-card
+              id="demoCard"
+              class="demo-card"
+              eyebrow="Reusable UI"
+              heading="Dial before you dig service review"
+              status="Awaiting locates"
+              tone="active"
+              reference="REF-2041"
+              location="48 Pirrama Rd, Pyrmont NSW"
+              updated-at="2026-03-30 09:15 AEDT"
+              description="Starter card built as a Web Component so it stays portable across host apps."
+            >
+              <div slot="media" class="media-badge">01</div>
+              <p id="demoBodyCopy">
+                Use the default slot for richer supporting copy, tags, or mini layouts that belong
+                to the host application.
+              </p>
+              <button slot="actions" type="button">Open enquiry</button>
+              <a slot="actions" href="#usage">View usage</a>
+            </byda-status-card>
+
+            <div class="status-log">
+              <p class="eyebrow">Host interaction</p>
+              <p id="actionLog" class="log-copy">
+                Last interaction: none yet. The host page keeps control of button handlers.
+              </p>
+            </div>
+
+            <div id="usage" class="preview-stack">
+              <div>
+                <p class="eyebrow">Usage</p>
+                <h2>Drop the same tag into each host</h2>
+              </div>
+
+              <div class="snippet-grid">
+                <article class="snippet-card">
+                  <h3>Vanilla HTML</h3>
+                  <pre><code>&lt;script src="/components/byda-components.js" defer&gt;&lt;/script&gt;
+
+&lt;byda-status-card
+  heading="Plain HTML host"
+  status="Ready"
+  tone="success"
+&gt;
+  &lt;button slot="actions"&gt;Open enquiry&lt;/button&gt;
+&lt;/byda-status-card&gt;</code></pre>
+                </article>
+
+                <article class="snippet-card">
+                  <h3>React</h3>
+                  <pre><code>import "../dist/components/byda-components.esm.js";
+
+export function Card() {
+  return (
+    &lt;byda-status-card heading="React host" status="Ready"&gt;
+      &lt;button slot="actions"&gt;Open enquiry&lt;/button&gt;
+    &lt;/byda-status-card&gt;
+  );
+}</code></pre>
+                </article>
+
+                <article class="snippet-card">
+                  <h3>Angular</h3>
+                  <pre><code>import "../dist/components/byda-components.esm.js";
+
+@NgModule({
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
+})</code></pre>
+                </article>
+
+                <article class="snippet-card">
+                  <h3>WordPress</h3>
+                  <pre><code>wp_enqueue_script(
+  "byda-components",
+  get_stylesheet_directory_uri() . "/assets/byda-components.js",
+  array(),
+  null,
+  true
+);</code></pre>
+                </article>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

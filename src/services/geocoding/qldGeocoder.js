@@ -41,7 +41,7 @@ export class QldGeocoder {
       }),
     );
 
-    const ranked = response.features
+    const ranked = (response.features ?? [])
       .flatMap((feature) => {
         if (!feature.geometry) {
           return [];

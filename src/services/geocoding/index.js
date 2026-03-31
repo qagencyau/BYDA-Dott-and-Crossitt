@@ -23,11 +23,16 @@ export class GeocodingService {
   }
 
   async enrich(site) {
-    if (site.state !== "QLD") {
-      return site;
+    switch (site.state) {
+      case "NSW":
+        return this.nsw.enrich(site).catch(() => site);
+      case "QLD":
+        return this.qld.enrich(site).catch(() => site);
+      case "VIC":
+        return this.vic.enrich(site).catch(() => site);
+      default:
+        return assertNever(site.state);
     }
-
-    return this.qld.enrich(site);
   }
 }
 

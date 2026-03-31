@@ -1,4 +1,4 @@
-import { createBufferedSquare } from "../../lib/geo.js";
+import { createBufferedSquare, polygonFromArcGisRings } from "../../lib/geo.js";
 import { buildUrl, fetchJson } from "../../lib/http.js";
 import {
   dedupeSites,
@@ -10,6 +10,8 @@ import {
 
 const NSW_POINT_URL =
   "https://portal.spatial.nsw.gov.au/server/rest/services/NSW_Geocoded_Addressing_Theme/FeatureServer/1/query";
+const NSW_PARCEL_QUERY_URL =
+  "https://portal.spatial.nsw.gov.au/server/rest/services/NSW_Land_Parcel_Property_Theme/MapServer/8/query";
 
 export class NswGeocoder {
   constructor(bufferMeters) {
@@ -32,7 +34,7 @@ export class NswGeocoder {
       }),
     );
 
-    const rankedSites = points.features
+    const rankedSites = (points.features ?? [])
       .flatMap((feature) => {
         if (!feature.geometry) {
           return [];
@@ -66,5 +68,52 @@ export class NswGeocoder {
     );
 
     return dedupeSites(suburbMatches.length ? suburbMatches : rankedSites);
+  }
+
+  async enrich(site) {
+    if (!site.point) {
+      return site;
+    }
+
+    const response = await fetchJson(
+      buildUrl(NSW_PARCEL_QUERY_URL, {
+        where: "1=1",
+        geometry: JSON.stringify({
+          x: site.point.lng,
+          y: site.point.lat,
+          spatialReference: { wkid: 4326 },
+        }),
+        geometryType: "esriGeometryPoint",
+        inSR: 4326,
+        spatialRel: "esriSpatialRelIntersects",
+        outFields: "lotnumber,planlabel,lotidstring",
+        returnGeometry: true,
+        geometryPrecision: 6,
+        outSR: 4326,
+        resultRecordCount: 1,
+        f: "json",
+      }),
+    );
+
+    const feature = response.features?.[0];
+    const polygon = feature?.geometry
+      ? polygonFromArcGisRings(feature.geometry.rings)
+      : null;
+
+    if (!polygon) {
+      return site;
+    }
+
+    return {
+      ...site,
+      polygon,
+      source: "NSW Cadastral lot",
+      metadata: {
+        ...site.metadata,
+        lotnumber: feature.attributes?.lotnumber ?? null,
+        planlabel: feature.attributes?.planlabel ?? null,
+        lotidstring: feature.attributes?.lotidstring ?? null,
+      },
+    };
   }
 }

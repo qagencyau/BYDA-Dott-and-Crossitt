@@ -48,6 +48,8 @@ npm run watch:components
 
 `<byda-process-steps>` is a real interactive element, not a visual mock. It owns its own form fields, maintains internal state across stages, and emits events a host page can consume.
 
+Step 1 now includes address-specific existing enquiry results inside the component. Hosts can either use the component's generated demo data or seed `existingEnquiries` through `element.value`.
+
 ```html
 <script src="/components/byda-components.js" defer></script>
 
@@ -72,7 +74,7 @@ npm run watch:components
 Public surface:
 
 - `element.value`: returns the current component state object
-- `element.value = {...}`: seeds the component with programmatic data
+- `element.value = {...}`: seeds the component with programmatic data, including `candidates` and `existingEnquiries`
 - `element.currentStep`: gets or sets the visible step as `1`, `2`, or `3`
 - `element.goToStep(stepNumber)`: moves to a specific stage
 - `element.reset()`: clears the draft and returns to Step 1

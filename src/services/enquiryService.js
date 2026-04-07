@@ -158,6 +158,57 @@ export class EnquiryService {
           }),
     ]);
 
+    const sorted = await this.mergeHistoryRecords({
+      localRecords: wantsLocal ? localRecords : [],
+      remoteRecords: remoteResult.enquiries,
+      limit,
+    });
+
+    return {
+      enquiries: sorted,
+      total:
+        source === "byda"
+          ? remoteResult.info?.count ?? sorted.length
+          : source === "local"
+            ? localRecords.length
+            : sorted.length,
+    };
+  }
+
+  async findEnquiriesByAddress({ address, source = "all", limit = 6, createdAfter } = {}) {
+    const wantsLocal = source === "local" || source === "all";
+    const wantsByda = (source === "byda" || source === "all") && this.bydaClient.isLive();
+    const remoteSearchLimit = Math.max(limit * 5, 50);
+
+    const [localRecords, remoteResult] = await Promise.all([
+      wantsLocal ? this.store.list() : Promise.resolve([]),
+      wantsByda
+        ? this.bydaClient.searchEnquiries({ limit: remoteSearchLimit, createdAfter })
+        : Promise.resolve({
+            info: { limit: remoteSearchLimit, count: 0 },
+            enquiries: [],
+          }),
+    ]);
+
+    const matchedLocalRecords = wantsLocal
+      ? localRecords.filter((record) => matchesLocalRecordAddress(record, address))
+      : [];
+    const matchedRemoteRecords = remoteResult.enquiries.filter((record) =>
+      matchesRemoteRecordAddress(record, address),
+    );
+
+    const matchedEnquiries = await this.mergeHistoryRecords({
+      localRecords: matchedLocalRecords,
+      remoteRecords: matchedRemoteRecords,
+    });
+
+    return {
+      enquiries: matchedEnquiries.slice(0, limit),
+      total: matchedEnquiries.length,
+    };
+  }
+
+  async mergeHistoryRecords({ localRecords = [], remoteRecords = [], limit } = {}) {
     const localRecordsByEnquiryId = new Map(
       localRecords
         .filter((record) => Number.isFinite(record.bydaEnquiryId))
@@ -166,7 +217,7 @@ export class EnquiryService {
     const matchedTokens = new Set();
     const enquiries = [];
 
-    for (const remote of remoteResult.enquiries) {
+    for (const remote of remoteRecords) {
       const local = findMatchingLocalRecord({
         localRecords,
         localRecordsByEnquiryId,
@@ -189,29 +240,16 @@ export class EnquiryService {
       enquiries.push(toRemoteHistoryItem(remote));
     }
 
-    if (wantsLocal) {
-      for (const local of localRecords) {
-        if (matchedTokens.has(local.token)) {
-          continue;
-        }
-
-        enquiries.push(toLocalHistoryItem(local));
+    for (const local of localRecords) {
+      if (matchedTokens.has(local.token)) {
+        continue;
       }
+
+      enquiries.push(toLocalHistoryItem(local));
     }
 
-    const sorted = enquiries
-      .sort((left, right) => compareIsoDates(right.createdAt, left.createdAt))
-      .slice(0, limit);
-
-    return {
-      enquiries: sorted,
-      total:
-        source === "byda"
-          ? remoteResult.info?.count ?? sorted.length
-          : source === "local"
-            ? localRecords.length
-            : sorted.length,
-    };
+    const sorted = enquiries.sort((left, right) => compareIsoDates(right.createdAt, left.createdAt));
+    return limit === undefined ? sorted : sorted.slice(0, limit);
   }
 
   async getRemoteEnquiryStatus(enquiryId) {
@@ -534,4 +572,121 @@ async function safelyResolve(work) {
 
 function toTimestamp(value) {
   return Number.isFinite(Date.parse(value ?? "")) ? Date.parse(value) : 0;
+}
+
+const STREET_TYPE_ALIASES = {
+  ALY: "ALLEY",
+  ARC: "ARCADE",
+  AV: "AVENUE",
+  AVE: "AVENUE",
+  BVD: "BOULEVARD",
+  CL: "CLOSE",
+  CRT: "COURT",
+  CT: "COURT",
+  CRES: "CRESCENT",
+  DR: "DRIVE",
+  HWY: "HIGHWAY",
+  LN: "LANE",
+  PDE: "PARADE",
+  PL: "PLACE",
+  PKWY: "PARKWAY",
+  RD: "ROAD",
+  SQ: "SQUARE",
+  ST: "STREET",
+  TCE: "TERRACE",
+};
+
+function matchesLocalRecordAddress(record, address) {
+  const target = normalizeStructuredAddress(address);
+
+  return [
+    record?.input?.address,
+    record?.site?.address,
+  ]
+    .filter(Boolean)
+    .some((candidate) => matchesNormalizedAddress(normalizeStructuredAddress(candidate), target));
+}
+
+function matchesRemoteRecordAddress(record, address) {
+  return matchesNormalizedAddress(
+    normalizeBydaAddress(record?.address),
+    normalizeStructuredAddress(address),
+  );
+}
+
+function matchesNormalizedAddress(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.streetNumber === right.streetNumber &&
+    left.streetName === right.streetName &&
+    left.suburb === right.suburb &&
+    left.state === right.state &&
+    left.postcode === right.postcode
+  );
+}
+
+function normalizeStructuredAddress(address) {
+  if (!address) {
+    return null;
+  }
+
+  return {
+    streetNumber: normalizeStreetNumber(address.streetNumber),
+    streetName: normalizeStreetName(address.streetName),
+    suburb: normalizeTokenSequence(address.suburb),
+    state: normalizeTokenSequence(address.state),
+    postcode: normalizePostcode(address.postcode),
+  };
+}
+
+function normalizeBydaAddress(address) {
+  if (!address) {
+    return null;
+  }
+
+  const line1 = String(address.line1 ?? "").trim();
+  const match = line1.match(/^([0-9A-Z/-]+)\s+(.+)$/i);
+
+  return {
+    streetNumber: normalizeStreetNumber(match?.[1] ?? ""),
+    streetName: normalizeStreetName(match?.[2] ?? line1),
+    suburb: normalizeTokenSequence(address.locality),
+    state: normalizeTokenSequence(address.state),
+    postcode: normalizePostcode(address.postcode),
+  };
+}
+
+function normalizeStreetNumber(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function normalizeStreetName(value) {
+  return tokenizeWords(value)
+    .map((token) => STREET_TYPE_ALIASES[token] ?? token)
+    .join(" ");
+}
+
+function normalizeTokenSequence(value) {
+  return tokenizeWords(value).join(" ");
+}
+
+function normalizePostcode(value) {
+  return String(value ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 4);
+}
+
+function tokenizeWords(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
 }

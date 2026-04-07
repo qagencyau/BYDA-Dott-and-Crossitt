@@ -28,6 +28,8 @@ const elements = {
   enquiryForm: document.querySelector("#enquiryForm"),
   candidateList: document.querySelector("#candidateList"),
   addressFeedback: document.querySelector("#addressFeedback"),
+  addressHistoryPanel: document.querySelector("#addressHistoryPanel"),
+  addressHistoryList: document.querySelector("#addressHistoryList"),
   submitFeedback: document.querySelector("#submitFeedback"),
   activityOptions: document.querySelector("#activityOptions"),
   activityCaption: document.querySelector("#activityCaption"),
@@ -259,63 +261,16 @@ function renderCandidates(sites) {
   });
 }
 
-function renderActivities() {
-  if (!state.options) {
-    return;
-  }
-
-  const isPlanning = elements.planningToggle.checked;
-  const activities = isPlanning
-    ? state.options.planningActivityTypes
-    : state.options.excavationActivityTypes;
-
-  elements.activityCaption.textContent = isPlanning ? "Planning domain" : "Excavation domain";
-  elements.activityOptions.innerHTML = activities
-    .map(
-      (activity, index) => `
-        <label class="pill-option">
-          <input
-            type="checkbox"
-            name="activityTypes"
-            value="${activity.code}"
-            ${index === 0 ? "checked" : ""}
-          />
-          <span>${activity.label}</span>
-        </label>
-      `,
-    )
-    .join("");
-}
-
-function renderMetaSummary() {
-  if (!state.options) {
-    return;
-  }
-
-  const baseMessage =
-    state.options.optionsSource === "live"
-      ? "Activity domains loaded from BYDA."
-      : "Using fallback activity domains. Configure live BYDA access before production use.";
-
-  if (!state.health) {
-    elements.optionsSource.textContent = baseMessage;
-    return;
-  }
-
-  elements.optionsSource.textContent = `${baseMessage} ${state.health.enquiryCount} tracked enquiries in the local store.`;
-}
-
-function renderHistory() {
-  if (!state.history.length) {
-    elements.historyList.innerHTML = `
+function buildHistoryMarkup(enquiries, emptyMessage) {
+  if (!enquiries.length) {
+    return `
       <div class="history-empty">
-        No recent enquiries were found in the local store or BYDA history.
+        ${escapeHtml(emptyMessage)}
       </div>
     `;
-    return;
   }
 
-  elements.historyList.innerHTML = state.history
+  return enquiries
     .map((enquiry) => {
       const heading =
         enquiry.userReference ||
@@ -376,8 +331,10 @@ function renderHistory() {
       `;
     })
     .join("");
+}
 
-  [...elements.historyList.querySelectorAll("[data-history-token]")].forEach((button) => {
+function bindHistoryActions(container) {
+  [...container.querySelectorAll("[data-history-token]")].forEach((button) => {
     button.addEventListener("click", () => {
       void loadHistoryItem({
         trackingToken: button.dataset.historyToken || "",
@@ -385,6 +342,71 @@ function renderHistory() {
       });
     });
   });
+}
+
+function renderAddressHistory(enquiries, emptyMessage = "No past enquiries were found for this address.") {
+  elements.addressHistoryPanel.hidden = false;
+  elements.addressHistoryList.innerHTML = buildHistoryMarkup(enquiries, emptyMessage);
+  bindHistoryActions(elements.addressHistoryList);
+}
+
+function hideAddressHistory() {
+  elements.addressHistoryPanel.hidden = true;
+  elements.addressHistoryList.innerHTML = "";
+}
+
+function renderActivities() {
+  if (!state.options) {
+    return;
+  }
+
+  const isPlanning = elements.planningToggle.checked;
+  const activities = isPlanning
+    ? state.options.planningActivityTypes
+    : state.options.excavationActivityTypes;
+
+  elements.activityCaption.textContent = isPlanning ? "Planning domain" : "Excavation domain";
+  elements.activityOptions.innerHTML = activities
+    .map(
+      (activity, index) => `
+        <label class="pill-option">
+          <input
+            type="checkbox"
+            name="activityTypes"
+            value="${activity.code}"
+            ${index === 0 ? "checked" : ""}
+          />
+          <span>${activity.label}</span>
+        </label>
+      `,
+    )
+    .join("");
+}
+
+function renderMetaSummary() {
+  if (!state.options) {
+    return;
+  }
+
+  const baseMessage =
+    state.options.optionsSource === "live"
+      ? "Activity domains loaded from BYDA."
+      : "Using fallback activity domains. Configure live BYDA access before production use.";
+
+  if (!state.health) {
+    elements.optionsSource.textContent = baseMessage;
+    return;
+  }
+
+  elements.optionsSource.textContent = `${baseMessage} ${state.health.enquiryCount} tracked enquiries in the local store.`;
+}
+
+function renderHistory() {
+  elements.historyList.innerHTML = buildHistoryMarkup(
+    state.history,
+    "No recent enquiries were found in the local store or BYDA history.",
+  );
+  bindHistoryActions(elements.historyList);
 }
 
 function renderDiagnostics(diagnostics) {
@@ -456,18 +478,45 @@ async function loadHistory() {
   }
 }
 
+async function loadAddressHistory(query) {
+  const params = new URLSearchParams({
+    ...query,
+    limit: "6",
+    source: "all",
+  });
+  const payload = await fetchJson(`/api/enquiries/by-address?${params.toString()}`);
+  return payload.enquiries || [];
+}
+
 async function searchAddresses({ autoSelectFirst = false } = {}) {
   const query = serializeAddressForm();
   const params = new URLSearchParams(query);
 
   setAddressFeedback("Searching address data...");
   elements.candidateList.innerHTML = "";
+  hideAddressHistory();
   setSelectedSite(null);
 
+  const [sitesResult, historyResult] = await Promise.allSettled([
+    fetchJson(`/api/addresses/search?${params.toString()}`),
+    loadAddressHistory(query),
+  ]);
+
+  if (sitesResult.status === "rejected") {
+    renderCandidates([]);
+    setAddressFeedback(describeError(sitesResult.reason), true);
+    return;
+  }
+
   try {
-    const payload = await fetchJson(`/api/addresses/search?${params.toString()}`);
-    const sites = payload.sites || [];
+    const sites = sitesResult.value.sites || [];
     renderCandidates(sites);
+
+    if (historyResult.status === "fulfilled") {
+      renderAddressHistory(historyResult.value);
+    } else {
+      renderAddressHistory([], "Past enquiries could not be loaded for this address.");
+    }
 
     if (autoSelectFirst && sites[0]) {
       setSelectedSite(sites[0]);
@@ -476,7 +525,8 @@ async function searchAddresses({ autoSelectFirst = false } = {}) {
     }
   } catch (error) {
     renderCandidates([]);
-    setAddressFeedback(error.message, true);
+    hideAddressHistory();
+    setAddressFeedback(describeError(error), true);
   }
 }
 

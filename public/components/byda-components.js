@@ -56,6 +56,7 @@ var BydaComponents = (() => {
       notes: ""
     },
     candidates: [],
+    existingEnquiries: [],
     selectedSite: null,
     tracking: { status: "Draft", bydaStatus: "NOT_STARTED", token: "", completedAt: "" },
     submitted: false
@@ -176,6 +177,17 @@ var BydaComponents = (() => {
         badge: "Parcel match",
         copy: "A parcel result based on your search."
       }
+    },
+    existing: {
+      title: "Past enquiries for this address",
+      copy: "Use these existing results to check what has already been lodged for the same location.",
+      prompt: "Existing results appear once enough address details are entered.",
+      none: "No existing enquiries were found for this address yet.",
+      resultLabel: "Existing result",
+      reference: "Reference",
+      created: "Created",
+      source: "Source",
+      bydaStatus: "BYDA status"
     }
   };
   var template = document.createElement("template");
@@ -194,10 +206,10 @@ var BydaComponents = (() => {
     .stage-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:start}
     .stage-index{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:var(--accentSoft);color:var(--accentStrong);font-size:1.05rem;font-weight:700}
     .stage-title,.debug-heading{margin:0;font-size:clamp(1.1rem,2vw,1.7rem);font-weight:700;line-height:1.08}
-    .notice,.selected-site,.field,.summary-card,.candidate-card,.empty-state{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(24,38,31,.08);background:rgba(255,255,255,.8)}
+    .notice,.selected-site,.field,.summary-card,.candidate-card,.empty-state,.history-card,.history-meta-item{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(24,38,31,.08);background:rgba(255,255,255,.8)}
     .notice[hidden],.debug-shell[hidden]{display:none}
     .notice.positive,.selected-site{background:rgba(45,141,98,.1);border-color:rgba(45,141,98,.16);color:var(--successInk)}
-    .body,.candidate-list,.button-row{display:flex;flex-direction:column;gap:18px}
+    .body,.candidate-list,.button-row,.history-section,.history-list{display:flex;flex-direction:column;gap:18px}
     .form-grid,.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
     .wide{grid-column:1/-1}
     .control,.textarea{width:100%;min-height:48px;padding:12px 14px;border-radius:14px;border:1px solid rgba(24,38,31,.1);background:#fff;color:var(--ink);font:inherit;font-size:.96rem}
@@ -212,12 +224,20 @@ var BydaComponents = (() => {
     .candidate-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px}
     .candidate-card.active{border-color:rgba(187,92,45,.26);background:rgba(187,92,45,.08)}
     .candidate-badge{min-height:28px;padding:4px 10px;font-size:.76rem}
-    .candidate-title,.summary-value{font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+    .candidate-title,.summary-value,.history-title{font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+    .history-head{display:flex;justify-content:space-between;gap:12px;align-items:start}
+    .history-card{gap:14px}
+    .history-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .history-meta-item{padding:12px 14px;background:rgba(255,255,255,.72)}
+    .history-status{display:inline-flex;align-items:center;min-height:32px;padding:6px 10px;border-radius:999px;background:rgba(24,38,31,.08);color:var(--ink);font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+    .history-status[data-status="ready"]{background:rgba(45,141,98,.14);color:var(--successInk)}
+    .history-status[data-status="processing"]{background:rgba(196,139,31,.16);color:#7a540a}
+    .history-status[data-status="historical"]{background:rgba(61,122,142,.14);color:#214554}
     .progress-track{width:100%;height:10px;border-radius:999px;background:rgba(24,38,31,.1);overflow:hidden}
     .progress-fill{height:100%;border-radius:999px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));transition:width .22s ease}
     .payload{margin:0;padding:16px;border-radius:18px;background:#17211c;color:#f4efe6;font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;font-size:.82rem;line-height:1.65;overflow:auto;white-space:pre-wrap;word-break:break-word}
     code{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace}
-    @media (max-width:900px){.form-grid,.summary-grid{grid-template-columns:1fr}}
+    @media (max-width:900px){.form-grid,.summary-grid,.history-meta{grid-template-columns:1fr}}
     @media (max-width:720px){.frame{padding:22px}.topline,.footer-actions{flex-direction:column;align-items:stretch}.stage-head{grid-template-columns:1fr}.button{width:100%}.candidate-card{grid-template-columns:1fr}}
   </style>
   <article class="panel">
@@ -277,6 +297,7 @@ var BydaComponents = (() => {
     if (input.enquiry && typeof input.enquiry === "object") Object.assign(next.enquiry, input.enquiry);
     if (input.tracking && typeof input.tracking === "object") Object.assign(next.tracking, input.tracking);
     if (Array.isArray(input.candidates)) next.candidates = input.candidates.map((candidate) => ({ ...candidate }));
+    if (Array.isArray(input.existingEnquiries)) next.existingEnquiries = input.existingEnquiries.map((enquiry) => ({ ...enquiry }));
     if (input.selectedSite && typeof input.selectedSite === "object") next.selectedSite = { ...input.selectedSite };
     next.submitted = Boolean(input.submitted);
     return next;
@@ -340,6 +361,74 @@ var BydaComponents = (() => {
         badge: USER_COPY.candidates.parcel.badge
       }
     ];
+  }
+  function generateExistingEnquiries(address) {
+    const label = formatAddressLabel(address);
+    if (!label || !hasAddressSearchInput(address)) return [];
+    const seed = buildIdentifierPart(getAddressSeed(address), "SITE");
+    const seedNumber = getSeedNumber(seed);
+    const baseTime = Date.UTC(2026, 2, 20 + seedNumber % 7, 8 + seedNumber % 6, 15, 0);
+    return [
+      {
+        id: `existing-${seed}-ready`,
+        addressLabel: label,
+        userReference: `IET-REF-${seed}-01`,
+        trackingToken: `IET-${seed}-A1`,
+        displayStatus: "Ready",
+        status: "ready",
+        bydaStatus: "ALL_RECEIVED",
+        source: "both",
+        createdAt: new Date(baseTime).toISOString(),
+        message: "Combined report already generated for this address."
+      },
+      {
+        id: `existing-${seed}-processing`,
+        addressLabel: label,
+        userReference: `IET-REF-${seed}-02`,
+        trackingToken: `IET-${seed}-B2`,
+        displayStatus: "Processing",
+        status: "processing",
+        bydaStatus: "PENDING_RESPONSES",
+        source: "local",
+        createdAt: new Date(baseTime + 1e3 * 60 * 60 * 14).toISOString(),
+        message: "Recent enquiry is still waiting on utility responses."
+      },
+      {
+        id: `existing-${seed}-historical`,
+        addressLabel: label,
+        enquiryId: 11e4 + seedNumber,
+        displayStatus: "Historical",
+        status: "historical",
+        bydaStatus: "ALL_RECEIVED",
+        source: "byda",
+        createdAt: new Date(baseTime - 1e3 * 60 * 60 * 24 * 6).toISOString(),
+        message: "Historical BYDA result found for the same address."
+      }
+    ].sort((left, right) => compareIsoDates(right.createdAt, left.createdAt));
+  }
+  function getSeedNumber(seed = "") {
+    return [...String(seed)].reduce((total, character) => total + character.charCodeAt(0), 0);
+  }
+  function compareIsoDates(left, right) {
+    const leftTime = Number.isFinite(Date.parse(left || "")) ? Date.parse(left) : 0;
+    const rightTime = Number.isFinite(Date.parse(right || "")) ? Date.parse(right) : 0;
+    return leftTime - rightTime;
+  }
+  function formatExistingSource(source) {
+    switch (source) {
+      case "both":
+        return "Local + BYDA";
+      case "byda":
+        return "BYDA";
+      default:
+        return "Local";
+    }
+  }
+  function formatExistingReference(enquiry) {
+    if (enquiry.userReference) return enquiry.userReference;
+    if (enquiry.trackingToken) return enquiry.trackingToken;
+    if (enquiry.enquiryId) return `BYDA enquiry ${enquiry.enquiryId}`;
+    return "Saved enquiry";
   }
   var BydaProcessSteps = class extends HTMLElement {
     constructor() {
@@ -436,6 +525,13 @@ var BydaComponents = (() => {
       if (this.canGenerateCandidates()) return USER_COPY.progress.searching;
       return USER_COPY.progress.notStarted;
     }
+    syncAddressResults() {
+      this.state.candidates = this.canGenerateCandidates() ? generateCandidates(this.state.address) : [];
+      this.state.existingEnquiries = this.canGenerateCandidates() ? generateExistingEnquiries(this.state.address) : [];
+      this.state.selectedSite = null;
+      this.state.enquiry.userReference = "";
+      this.setDraftTracking();
+    }
     syncStepFromAttributes() {
       this.stepIndex = Math.min(Math.max(parseInteger(this.getAttribute("current-step"), 1) - 1, 0), DEFAULT_STEPS.length - 1);
     }
@@ -453,7 +549,7 @@ var BydaComponents = (() => {
       this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail: { ...detail, currentStep: this.currentStep, stepTitle: buildStageItems(this)[this.stepIndex]?.title || "", value: this.value } }));
     }
     buildEventPayload() {
-      return { address: { ...this.state.address }, candidates: this.state.candidates.map((candidate) => ({ ...candidate })), selectedSite: this.state.selectedSite ? { ...this.state.selectedSite } : null, enquiry: { ...this.state.enquiry }, tracking: { ...this.state.tracking }, submitted: this.state.submitted };
+      return { address: { ...this.state.address }, candidates: this.state.candidates.map((candidate) => ({ ...candidate })), existingEnquiries: this.state.existingEnquiries.map((enquiry) => ({ ...enquiry })), selectedSite: this.state.selectedSite ? { ...this.state.selectedSite } : null, enquiry: { ...this.state.enquiry }, tracking: { ...this.state.tracking }, submitted: this.state.submitted };
     }
     setDraftTracking() {
       this.state.submitted = false;
@@ -469,10 +565,8 @@ var BydaComponents = (() => {
         this.render();
         return;
       }
-      this.state.candidates = generateCandidates(this.state.address);
-      this.state.selectedSite = null;
-      this.setDraftTracking();
-      this.notice = `${this.state.candidates.length} matches found.`;
+      this.syncAddressResults();
+      this.notice = `${this.state.candidates.length} matches found. ${this.state.existingEnquiries.length} existing result${this.state.existingEnquiries.length === 1 ? "" : "s"} loaded.`;
       this.noticeTone = "positive";
       this.render();
       this.emitComponentEvent("byda-process-change", { reason: "search" });
@@ -500,6 +594,7 @@ var BydaComponents = (() => {
       const a = this.state.address;
       const selectedSite = this.state.selectedSite;
       const emptyStateCopy = this.canGenerateCandidates() ? USER_COPY.notices.searchNone : USER_COPY.notices.searchEmpty;
+      const existingEmptyCopy = this.canGenerateCandidates() ? USER_COPY.existing.none : USER_COPY.existing.prompt;
       const candidates = this.state.candidates.length ? `
       <div class="candidate-list">
         ${this.state.candidates.map((candidate) => `
@@ -520,6 +615,55 @@ var BydaComponents = (() => {
       <div class="empty-state wide">
         <span class="field-label">Matches</span>
         <span class="summary-help">${emptyStateCopy}</span>
+      </div>
+    `;
+      const existingEnquiries = `
+      <div class="history-section">
+        <div>
+          <span class="field-label">${USER_COPY.existing.title}</span>
+          <div class="summary-help">${USER_COPY.existing.copy}</div>
+        </div>
+        ${this.state.existingEnquiries.length ? `
+              <div class="history-list">
+                ${this.state.existingEnquiries.map((enquiry) => `
+                  <div class="history-card">
+                    <div class="history-head">
+                      <div>
+                        <span class="field-label">${USER_COPY.existing.resultLabel}</span>
+                        <div class="history-title">${escapeHtml(enquiry.addressLabel || formatAddressLabel(this.state.address))}</div>
+                        <div class="summary-help">${escapeHtml(enquiry.message || "Existing result for the selected address.")}</div>
+                      </div>
+                      <span class="history-status" data-status="${escapeHtml(String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase())}">
+                        ${escapeHtml(enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown")}
+                      </span>
+                    </div>
+                    <div class="history-meta">
+                      <div class="history-meta-item">
+                        <span class="field-label">${USER_COPY.existing.reference}</span>
+                        <span class="summary-value">${escapeHtml(formatExistingReference(enquiry))}</span>
+                      </div>
+                      <div class="history-meta-item">
+                        <span class="field-label">${USER_COPY.existing.created}</span>
+                        <span class="summary-value">${escapeHtml(formatDateTimeLabel(enquiry.createdAt) || "Not available")}</span>
+                      </div>
+                      <div class="history-meta-item">
+                        <span class="field-label">${USER_COPY.existing.source}</span>
+                        <span class="summary-value">${escapeHtml(formatExistingSource(enquiry.source))}</span>
+                      </div>
+                      <div class="history-meta-item">
+                        <span class="field-label">${USER_COPY.existing.bydaStatus}</span>
+                        <span class="summary-value">${escapeHtml(enquiry.bydaStatus || "Not available")}</span>
+                      </div>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            ` : `
+              <div class="empty-state wide">
+                <span class="field-label">${USER_COPY.existing.title}</span>
+                <span class="summary-help">${existingEmptyCopy}</span>
+              </div>
+            `}
       </div>
     `;
       return `
@@ -549,6 +693,7 @@ var BydaComponents = (() => {
         </label>
       </div>
       ${candidates}
+      ${existingEnquiries}
       ${selectedSite ? `<div class="selected-site"><strong>${USER_COPY.search.selectedLabel}:</strong> ${escapeHtml(selectedSite.title)}</div>` : ""}
     `;
     }
@@ -628,10 +773,7 @@ var BydaComponents = (() => {
       if (this.state[scope][field] === nextValue) return false;
       this.state[scope][field] = nextValue;
       if (scope === "address") {
-        this.state.candidates = generateCandidates(this.state.address);
-        this.state.selectedSite = null;
-        this.state.enquiry.userReference = "";
-        this.setDraftTracking();
+        this.syncAddressResults();
       }
       if (scope === "enquiry") this.setDraftTracking();
       return true;

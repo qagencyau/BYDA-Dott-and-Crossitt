@@ -85,6 +85,12 @@ const enquiryListQuerySchema = z.object({
   createdAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+const enquiryAddressQuerySchema = addressSchema.extend({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  source: z.enum(["local", "byda", "all"]).optional(),
+  createdAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 const bydaEnquiryParamSchema = z.object({
   enquiryId: z.coerce.number().int().positive(),
 });
@@ -160,6 +166,27 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
     const history = await enquiryService.listEnquiries({
       limit: query.limit ?? 20,
       source: query.source ?? "local",
+      createdAfter: query.createdAfter,
+    });
+
+    response.json({
+      ...history,
+      requestId: response.locals.requestId,
+    });
+  }));
+
+  router.get("/api/enquiries/by-address", asyncHandler(async (request, response) => {
+    const query = enquiryAddressQuerySchema.parse(request.query);
+    const history = await enquiryService.findEnquiriesByAddress({
+      address: {
+        streetNumber: query.streetNumber,
+        streetName: query.streetName,
+        suburb: query.suburb,
+        state: query.state,
+        postcode: query.postcode,
+      },
+      limit: query.limit ?? 6,
+      source: query.source ?? "all",
       createdAfter: query.createdAfter,
     });
 

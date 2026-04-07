@@ -1,6 +1,7 @@
 const state = {
   options: null,
   health: null,
+  history: [],
   selectedSite: null,
   trackingToken: null,
   pollHandle: null,
@@ -39,6 +40,8 @@ const elements = {
   modeBadge: document.querySelector("#modeBadge"),
   optionsSource: document.querySelector("#optionsSource"),
   trackingTokenInput: document.querySelector("#trackingTokenInput"),
+  refreshHistoryButton: document.querySelector("#refreshHistoryButton"),
+  historyList: document.querySelector("#historyList"),
   searchAddressButton: document.querySelector("#searchAddressButton"),
   loadTestCaseButton: document.querySelector("#loadTestCaseButton"),
   dryRunEnquiryButton: document.querySelector("#dryRunEnquiryButton"),
@@ -110,6 +113,15 @@ function setFieldValue(form, name, value) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function setCheckedValues(name, values) {
   const selected = new Set(values);
   [...document.querySelectorAll(`input[name="${name}"]`)].forEach((input) => {
@@ -142,6 +154,33 @@ function renderDetails(rows) {
     .join("");
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "Not available";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatHistorySource(source) {
+  switch (source) {
+    case "both":
+      return "Local + BYDA";
+    case "byda":
+      return "BYDA";
+    default:
+      return "Local";
+  }
+}
+
 function setDiagnosticsCard(title, copy, muted = false) {
   elements.diagnosticsCard.classList.toggle("muted", muted);
   elements.diagnosticsCard.innerHTML = `
@@ -151,9 +190,7 @@ function setDiagnosticsCard(title, copy, muted = false) {
   `;
 }
 
-function setSelectedSite(site) {
-  state.selectedSite = site;
-
+function renderSelectedSiteCard(site) {
   if (!site) {
     elements.selectedSiteCard.innerHTML = `
       <p class="status-label">Selected site</p>
@@ -167,6 +204,25 @@ function setSelectedSite(site) {
     <strong>${site.label}</strong>
     <p class="status-copy">${site.source}</p>
   `;
+}
+
+function setSelectedSite(site) {
+  state.selectedSite = site;
+  renderSelectedSiteCard(site);
+}
+
+function setSelectedSitePreview(label, source) {
+  state.selectedSite = null;
+
+  if (!label) {
+    renderSelectedSiteCard(null);
+    return;
+  }
+
+  renderSelectedSiteCard({
+    label,
+    source,
+  });
 }
 
 function renderCandidates(sites) {
@@ -249,6 +305,88 @@ function renderMetaSummary() {
   elements.optionsSource.textContent = `${baseMessage} ${state.health.enquiryCount} tracked enquiries in the local store.`;
 }
 
+function renderHistory() {
+  if (!state.history.length) {
+    elements.historyList.innerHTML = `
+      <div class="history-empty">
+        No recent enquiries were found in the local store or BYDA history.
+      </div>
+    `;
+    return;
+  }
+
+  elements.historyList.innerHTML = state.history
+    .map((enquiry) => {
+      const heading =
+        enquiry.userReference ||
+        enquiry.addressLabel ||
+        enquiry.trackingToken ||
+        (enquiry.enquiryId ? `BYDA enquiry ${enquiry.enquiryId}` : "Saved enquiry");
+      const readyLabel = enquiry.fileUrl ? "Open Report" : "Open Link";
+      const statusLabel =
+        enquiry.displayStatus || enquiry.trackingStatus || enquiry.bydaStatus || "unknown";
+      const subtitle =
+        enquiry.addressLabel ||
+        (enquiry.enquiryId ? `BYDA enquiry ${enquiry.enquiryId}` : enquiry.trackingToken);
+
+      return `
+        <article class="history-item">
+          <div class="history-item-head">
+            <div>
+              <strong>${escapeHtml(heading)}</strong>
+              <small>${escapeHtml(subtitle)}</small>
+            </div>
+            <span class="history-status" data-status="${escapeHtml(String(statusLabel).toLowerCase())}">
+              ${escapeHtml(statusLabel)}
+            </span>
+          </div>
+
+          <div class="history-meta">
+            <span>${escapeHtml(formatHistorySource(enquiry.source))}</span>
+            <span>Created ${escapeHtml(formatDateTime(enquiry.createdAt))}</span>
+            <span>BYDA ${escapeHtml(enquiry.bydaStatus || "Pending")}</span>
+            <span>${escapeHtml(enquiry.trackingToken ? "Tracked locally" : "Remote only")}</span>
+          </div>
+
+          <div class="history-actions">
+            <button
+              class="button button-secondary"
+              type="button"
+              data-history-token="${escapeHtml(enquiry.trackingToken || "")}"
+              data-history-enquiry-id="${escapeHtml(enquiry.enquiryId || "")}"
+            >
+              Load Status
+            </button>
+            ${
+              enquiry.readyUrl
+                ? `
+                  <a
+                    class="button button-secondary"
+                    href="${escapeHtml(enquiry.readyUrl)}"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    ${readyLabel}
+                  </a>
+                `
+                : ""
+            }
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  [...elements.historyList.querySelectorAll("[data-history-token]")].forEach((button) => {
+    button.addEventListener("click", () => {
+      void loadHistoryItem({
+        trackingToken: button.dataset.historyToken || "",
+        enquiryId: button.dataset.historyEnquiryId || "",
+      });
+    });
+  });
+}
+
 function renderDiagnostics(diagnostics) {
   if (!diagnostics) {
     elements.diagnosticsChecks.innerHTML = "";
@@ -299,6 +437,23 @@ async function loadOptions() {
 async function loadHealth() {
   state.health = await fetchJson("/api/health");
   renderMetaSummary();
+}
+
+async function loadHistory() {
+  elements.refreshHistoryButton.disabled = true;
+
+  try {
+    const payload = await fetchJson("/api/enquiries?limit=12&source=all");
+    state.history = payload.enquiries || [];
+    renderHistory();
+  } catch (error) {
+    state.history = [];
+    elements.historyList.innerHTML = `
+      <div class="history-empty">${escapeHtml(describeError(error))}</div>
+    `;
+  } finally {
+    elements.refreshHistoryButton.disabled = false;
+  }
 }
 
 async function searchAddresses({ autoSelectFirst = false } = {}) {
@@ -431,8 +586,12 @@ async function submitEnquiry(event) {
     state.trackingToken = result.token;
     elements.trackingTokenInput.value = result.token;
     setFeedback(`Tracking token created: ${result.token}`);
-    await loadTrackingStatus(result.token);
-    startPolling(result.token);
+    const status = await loadTrackingStatus(result.token);
+    await loadHistory();
+
+    if (status.status !== "ready" && status.status !== "failed") {
+      startPolling({ trackingToken: result.token });
+    }
   } catch (error) {
     setFeedback(describeError(error), true);
   }
@@ -440,8 +599,11 @@ async function submitEnquiry(event) {
 
 function renderStatusDetails(status) {
   const rows = [
-    ["Tracking token", status.token],
+    ["History source", formatHistorySource(status.source || "local")],
+    ["Tracking token", status.token || "Not tracked locally"],
     ["Mode", status.mode],
+    ["Address", status.addressLabel || status.site?.label || "Not available"],
+    ["User reference", status.userReference || "Not provided"],
     ["BYDA enquiry", status.enquiryId || "Pending"],
     ["BYDA status", status.bydaStatus || "Pending"],
     [
@@ -456,6 +618,26 @@ function renderStatusDetails(status) {
   renderDetails(rows);
 }
 
+function renderLoadedStatus(status) {
+  const title = String(status.displayStatus || status.status || status.bydaStatus || "unknown");
+
+  setStatusCard(title.toUpperCase(), status.message);
+  renderStatusDetails(status);
+
+  if (status.site) {
+    setSelectedSite(status.site);
+  } else {
+    setSelectedSitePreview(
+      status.addressLabel || null,
+      status.source === "byda" ? "BYDA history" : "Tracked enquiry",
+    );
+  }
+
+  if (status.status === "ready" || status.status === "failed") {
+    stopPolling();
+  }
+}
+
 function renderDryRunDetails(validation) {
   const rows = [
     ["Mode", "Dry run"],
@@ -467,6 +649,49 @@ function renderDryRunDetails(validation) {
   ];
 
   renderDetails(rows);
+}
+
+async function loadTrackedEnquiry(token) {
+  if (!token) {
+    return;
+  }
+
+  elements.trackingTokenInput.value = token;
+  const status = await loadTrackingStatus(token);
+
+  if (status.status !== "ready" && status.status !== "failed") {
+    startPolling({ trackingToken: token });
+  }
+}
+
+async function loadRemoteEnquiryStatus(enquiryId) {
+  if (!enquiryId) {
+    return;
+  }
+
+  state.trackingToken = null;
+  elements.trackingTokenInput.value = "";
+
+  const status = await fetchJson(`/api/enquiries/byda/${enquiryId}`);
+  renderLoadedStatus(status);
+  return status;
+}
+
+async function loadHistoryItem({ trackingToken, enquiryId }) {
+  if (trackingToken) {
+    await loadTrackedEnquiry(trackingToken);
+    return;
+  }
+
+  if (!enquiryId) {
+    return;
+  }
+
+  const status = await loadRemoteEnquiryStatus(enquiryId);
+
+  if (status.status !== "ready" && status.status !== "failed") {
+    startPolling({ enquiryId });
+  }
 }
 
 async function dryRunEnquiry() {
@@ -504,23 +729,19 @@ async function dryRunEnquiry() {
 
 async function loadTrackingStatus(token) {
   const status = await fetchJson(`/api/enquiries/${token}`);
-
-  setStatusCard(status.status.toUpperCase(), status.message);
-  renderStatusDetails(status);
-
-  if (status.site) {
-    setSelectedSite(status.site);
-  }
-
-  if (status.status === "ready" || status.status === "failed") {
-    stopPolling();
-  }
+  state.trackingToken = token;
+  renderLoadedStatus(status);
+  return status;
 }
 
-function startPolling(token) {
+function startPolling(target) {
   stopPolling();
   state.pollHandle = window.setInterval(() => {
-    loadTrackingStatus(token).catch((error) => {
+    const request = target.trackingToken
+      ? loadTrackingStatus(target.trackingToken)
+      : loadRemoteEnquiryStatus(target.enquiryId);
+
+    request.catch((error) => {
       setStatusCard("Error", describeError(error));
       stopPolling();
     });
@@ -583,6 +804,9 @@ elements.searchAddressButton.addEventListener("click", () => {
 elements.loadTestCaseButton.addEventListener("click", () => {
   void loadTestCase();
 });
+elements.refreshHistoryButton.addEventListener("click", () => {
+  void loadHistory();
+});
 elements.dryRunEnquiryButton.addEventListener("click", () => {
   void dryRunEnquiry();
 });
@@ -594,8 +818,7 @@ document.querySelector("#loadTrackingButton").addEventListener("click", async ()
   }
 
   try {
-    await loadTrackingStatus(token);
-    startPolling(token);
+    await loadTrackedEnquiry(token);
   } catch (error) {
     setStatusCard("Not found", describeError(error));
   }
@@ -615,6 +838,7 @@ elements.manualAuthority.addEventListener("input", () => {
 
 setDefaultDates();
 renderDiagnostics(null);
-Promise.all([loadOptions(), loadHealth()]).catch((error) => {
+renderHistory();
+Promise.all([loadOptions(), loadHealth(), loadHistory()]).catch((error) => {
   setStatusCard("Startup error", describeError(error));
 });

@@ -28,9 +28,33 @@ export class JsonStore {
     return data.enquiries.find((entry) => entry.token === token) ?? null;
   }
 
+  async findByBydaEnquiryId(enquiryId) {
+    const data = await this.readData();
+    return data.enquiries.find((entry) => entry.bydaEnquiryId === enquiryId) ?? null;
+  }
+
   async count() {
     const data = await this.readData();
     return data.enquiries.length;
+  }
+
+  async list({ limit, sort = "desc" } = {}) {
+    const data = await this.readData();
+    const sorted = [...data.enquiries].sort((left, right) => {
+      const leftTime = Number.isFinite(Date.parse(left.createdAt ?? ""))
+        ? Date.parse(left.createdAt)
+        : 0;
+      const rightTime = Number.isFinite(Date.parse(right.createdAt ?? ""))
+        ? Date.parse(right.createdAt)
+        : 0;
+      return sort === "asc" ? leftTime - rightTime : rightTime - leftTime;
+    });
+
+    if (limit === undefined) {
+      return sorted;
+    }
+
+    return sorted.slice(0, limit);
   }
 
   async listPending() {

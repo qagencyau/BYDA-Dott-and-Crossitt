@@ -9,7 +9,12 @@ This repo now includes a framework-agnostic frontend component setup built aroun
 - Angular can render the same element once `CUSTOM_ELEMENTS_SCHEMA` is enabled.
 - Vanilla HTML can use the component without any framework runtime.
 
-The starter component is `<byda-status-card>`. It is intentionally small, but it already demonstrates:
+The components in this starter are:
+
+- `<byda-status-card>` for compact status display
+- `<byda-process-steps>` for a self-contained three-step enquiry flow with internal state and custom events
+
+`<byda-status-card>` is intentionally small, but it already demonstrates:
 
 - attribute-driven API
 - shadow-DOM encapsulated styles
@@ -18,7 +23,8 @@ The starter component is `<byda-status-card>`. It is intentionally small, but it
 
 ## Files
 
-- `component-library/src/components/byda-status-card.js`: component source
+- `component-library/src/components/byda-status-card.js`: status-card source
+- `component-library/src/components/byda-process-steps.js`: staged-flow source
 - `component-library/src/index.js`: exports and auto-registration
 - `scripts/build-components.js`: bundles the component for distribution and the local playground
 - `public/component-playground.html`: interactive demo page
@@ -37,6 +43,45 @@ npm run watch:components
 - `public/components/byda-components.js`
 
 ## Usage
+
+### Interactive Staged Flow
+
+`<byda-process-steps>` is a real interactive element, not a visual mock. It owns its own form fields, maintains internal state across stages, and emits events a host page can consume.
+
+```html
+<script src="/components/byda-components.js" defer></script>
+
+<byda-process-steps
+  heading="Interactive enquiry timeline"
+  debug
+></byda-process-steps>
+
+<script>
+  const flow = document.querySelector("byda-process-steps");
+
+  flow.addEventListener("byda-process-change", (event) => {
+    console.log("draft changed", event.detail.value);
+  });
+
+  flow.addEventListener("byda-process-complete", (event) => {
+    console.log("completed payload", event.detail.value);
+  });
+</script>
+```
+
+Public surface:
+
+- `element.value`: returns the current component state object
+- `element.value = {...}`: seeds the component with programmatic data
+- `element.currentStep`: gets or sets the visible step as `1`, `2`, or `3`
+- `element.goToStep(stepNumber)`: moves to a specific stage
+- `element.reset()`: clears the draft and returns to Step 1
+
+Custom events:
+
+- `byda-process-change`: fires whenever the staged draft changes
+- `byda-process-step-change`: fires when navigation moves between stages
+- `byda-process-complete`: fires when the user completes the staged test flow
 
 ### Vanilla HTML
 

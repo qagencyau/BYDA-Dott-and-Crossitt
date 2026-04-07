@@ -10,6 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Space+Grotesk:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
+    <script src="/components/byda-components.js" defer></script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -28,6 +29,12 @@
           <p id="optionsSource" class="meta-note"></p>
         </div>
       </header>
+
+      <byda-process-steps
+        steps="Find Location|Enquiry Details|Review & Track"
+        details="Enter the address details and choose the best match.|Add your dates and any extra details you want included.|Check your details and keep your reference number for later."
+        heading="Enquiry form"
+      ></byda-process-steps>
 
       <main class="layout">
         <section class="panel panel-form">
@@ -210,6 +217,20 @@
               </div>
             </label>
           </div>
+
+          <div class="section-heading top-gap">
+            <p class="section-kicker">History</p>
+            <h2>Past Enquiries</h2>
+          </div>
+
+          <div class="actions">
+            <button id="refreshHistoryButton" class="button button-secondary" type="button">
+              Refresh History
+            </button>
+            <p class="form-note">Recent enquiries from the local tracking store and BYDA.</p>
+          </div>
+
+          <div id="historyList" class="history-list"></div>
 
           <div id="selectedSiteCard" class="status-card muted">
             <p class="status-label">Selected site</p>

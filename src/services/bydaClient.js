@@ -1,5 +1,16 @@
 import { HttpError, buildUrl, fetchJson } from "../lib/http.js";
 
+const HISTORY_FIELDS = [
+  "id",
+  "externalId",
+  "userReference",
+  "status",
+  "createdAt",
+  "updatedAt",
+  "digStartAt",
+  "digEndAt",
+].join(",");
+
 export class BydaClient {
   tokenCache = null;
 
@@ -122,6 +133,44 @@ export class BydaClient {
 
   async getEnquiry(enquiryId) {
     return this.request("GET", `/enquiries/${enquiryId}`);
+  }
+
+  async searchEnquiries({ limit = 20, offset = 0, createdAfter } = {}) {
+    const query = {
+      limit,
+      offset,
+      order: "-createdAt",
+      fields: HISTORY_FIELDS,
+      include: "Address",
+      returnGeometry: false,
+    };
+
+    if (createdAfter) {
+      query.filter = `createdAfter:${createdAfter}`;
+    }
+
+    const response = await this.request("GET", "/enquiries", undefined, query);
+    const enquiries = Array.isArray(response?.Enquiries) ? response.Enquiries : [];
+
+    return {
+      info: response?.Info ?? {
+        offset,
+        limit,
+        count: enquiries.length,
+      },
+      enquiries: enquiries.map((record) => ({
+        enquiryId: record.id ?? null,
+        externalId: record.externalId ?? null,
+        bydaStatus: record.status ?? null,
+        userReference: record.userReference ?? null,
+        createdAt: record.createdAt ?? null,
+        updatedAt: record.updatedAt ?? null,
+        digStartAt: record.digStartAt ?? null,
+        digEndAt: record.digEndAt ?? null,
+        addressLabel: formatAddressLabel(record.Address),
+        address: record.Address ?? null,
+      })),
+    };
   }
 
   async getShareLink(enquiryId) {
@@ -288,4 +337,20 @@ export class BydaClient {
 
     return response.access_token;
   }
+}
+
+function formatAddressLabel(address) {
+  if (!address) {
+    return null;
+  }
+
+  return [
+    address.line1,
+    address.line2,
+    address.locality,
+    address.state,
+    address.postcode,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }

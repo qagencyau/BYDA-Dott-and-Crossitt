@@ -79,6 +79,16 @@ const diagnosticsSchema = z.object({
   resolvedSite: resolvedSiteSchema.optional(),
 });
 
+const enquiryListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  source: z.enum(["local", "byda", "all"]).optional(),
+  createdAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const bydaEnquiryParamSchema = z.object({
+  enquiryId: z.coerce.number().int().positive(),
+});
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -94,9 +104,13 @@ function toStatusPayload(record) {
   }
 
   return {
+    source: "local",
     token: record.token,
+    trackingToken: record.token,
     mode: record.mode,
     status: record.status,
+    trackingStatus: record.status,
+    displayStatus: record.status ?? record.bydaStatus ?? "unknown",
     message: record.message,
     enquiryId: record.bydaEnquiryId,
     externalId: record.bydaExternalId,
@@ -106,6 +120,8 @@ function toStatusPayload(record) {
     shareUrl: record.shareUrl ?? null,
     error: record.error ?? null,
     site: record.site,
+    addressLabel: record.site?.label ?? null,
+    userReference: record.input?.userReference ?? null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     lastPolledAt: record.lastPolledAt ?? null,
@@ -137,6 +153,20 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
 
   router.get("/api/options", asyncHandler(async (_request, response) => {
     response.json(await enquiryService.getOptions());
+  }));
+
+  router.get("/api/enquiries", asyncHandler(async (request, response) => {
+    const query = enquiryListQuerySchema.parse(request.query);
+    const history = await enquiryService.listEnquiries({
+      limit: query.limit ?? 20,
+      source: query.source ?? "local",
+      createdAfter: query.createdAfter,
+    });
+
+    response.json({
+      ...history,
+      requestId: response.locals.requestId,
+    });
   }));
 
   router.get("/api/addresses/search", asyncHandler(async (request, response) => {
@@ -190,6 +220,12 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
       result: validation.result,
       requestId: response.locals.requestId,
     });
+  }));
+
+  router.get("/api/enquiries/byda/:enquiryId", asyncHandler(async (request, response) => {
+    const params = bydaEnquiryParamSchema.parse(request.params);
+    const status = await enquiryService.getRemoteEnquiryStatus(params.enquiryId);
+    response.json(status);
   }));
 
   router.get("/api/enquiries/:token", asyncHandler(async (request, response) => {

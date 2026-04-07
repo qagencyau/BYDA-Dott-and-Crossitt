@@ -144,10 +144,194 @@ export class EnquiryService {
     return this.store.get(token);
   }
 
+  async listEnquiries({ source = "local", limit = 20, createdAfter } = {}) {
+    const wantsLocal = source === "local" || source === "all";
+    const wantsByda = (source === "byda" || source === "all") && this.bydaClient.isLive();
+
+    const [localRecords, remoteResult] = await Promise.all([
+      wantsLocal ? this.store.list() : Promise.resolve([]),
+      wantsByda
+        ? this.bydaClient.searchEnquiries({ limit, createdAfter })
+        : Promise.resolve({
+            info: { limit, count: 0 },
+            enquiries: [],
+          }),
+    ]);
+
+    const localRecordsByEnquiryId = new Map(
+      localRecords
+        .filter((record) => Number.isFinite(record.bydaEnquiryId))
+        .map((record) => [record.bydaEnquiryId, record]),
+    );
+    const matchedTokens = new Set();
+    const enquiries = [];
+
+    for (const remote of remoteResult.enquiries) {
+      const local = findMatchingLocalRecord({
+        localRecords,
+        localRecordsByEnquiryId,
+        matchedTokens,
+        remoteRecord: remote,
+      });
+
+      if (local) {
+        matchedTokens.add(local.token);
+        const linkedLocal = await this.linkRemoteIdentifiers(local, remote);
+
+        if (linkedLocal.bydaEnquiryId) {
+          localRecordsByEnquiryId.set(linkedLocal.bydaEnquiryId, linkedLocal);
+        }
+
+        enquiries.push(mergeHistoryItem(linkedLocal, remote));
+        continue;
+      }
+
+      enquiries.push(toRemoteHistoryItem(remote));
+    }
+
+    if (wantsLocal) {
+      for (const local of localRecords) {
+        if (matchedTokens.has(local.token)) {
+          continue;
+        }
+
+        enquiries.push(toLocalHistoryItem(local));
+      }
+    }
+
+    const sorted = enquiries
+      .sort((left, right) => compareIsoDates(right.createdAt, left.createdAt))
+      .slice(0, limit);
+
+    return {
+      enquiries: sorted,
+      total:
+        source === "byda"
+          ? remoteResult.info?.count ?? sorted.length
+          : source === "local"
+            ? localRecords.length
+            : sorted.length,
+    };
+  }
+
+  async getRemoteEnquiryStatus(enquiryId) {
+    if (!this.bydaClient.isLive()) {
+      throw new Error("BYDA live history is unavailable while mock mode is enabled.");
+    }
+
+    const detail = await this.bydaClient.getEnquiry(enquiryId);
+    const localRecord = await this.findLocalRecordForRemote({
+      enquiryId,
+      externalId: detail?.externalId ?? null,
+      userReference: detail?.userReference ?? null,
+      createdAt: detail?.createdAt ?? null,
+      bydaStatus: detail?.status ?? null,
+    });
+
+    const shareUrl = localRecord?.shareUrl ?? (await safelyResolve(() => this.bydaClient.getShareLink(enquiryId)));
+    let combinedFileId = localRecord?.combinedFileId ?? null;
+    let combinedJobId = localRecord?.combinedJobId ?? null;
+    let fileUrl = localRecord?.fileUrl ?? null;
+
+    if (!combinedFileId) {
+      const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedZip(enquiryId));
+      combinedFileId = downloadRequest?.File?.id ?? null;
+      combinedJobId = downloadRequest?.Job?.id ?? null;
+    }
+
+    if (combinedFileId && !fileUrl) {
+      fileUrl = await safelyResolve(() => this.bydaClient.probeFileUrl(combinedFileId));
+    }
+
+    const addressLabel = formatAddressLabel(detail?.Address) ?? localRecord?.site?.label ?? null;
+    const trackingStatus = localRecord?.status ?? (fileUrl ? "ready" : "processing");
+
+    return {
+      source: localRecord ? "both" : "byda",
+      token: localRecord?.token ?? null,
+      trackingToken: localRecord?.token ?? null,
+      mode: localRecord?.mode ?? "live",
+      status: trackingStatus,
+      trackingStatus,
+      displayStatus: trackingStatus,
+      message: localRecord?.message ?? buildRemoteStatusMessage({ fileUrl, shareUrl }),
+      enquiryId: detail?.id ?? enquiryId,
+      externalId: detail?.externalId ?? localRecord?.bydaExternalId ?? null,
+      bydaStatus: detail?.status ?? localRecord?.bydaStatus ?? null,
+      readyUrl: fileUrl ?? shareUrl ?? null,
+      fileUrl,
+      shareUrl,
+      error: localRecord?.error ?? null,
+      site: localRecord?.site ?? null,
+      addressLabel,
+      userReference: detail?.userReference ?? localRecord?.input?.userReference ?? null,
+      createdAt: detail?.createdAt ?? localRecord?.createdAt ?? null,
+      updatedAt: detail?.updatedAt ?? localRecord?.updatedAt ?? null,
+      lastPolledAt: localRecord?.lastPolledAt ?? null,
+    };
+  }
+
   async runLiveDiagnostics({ resolvedSite } = {}) {
     return this.bydaClient.runDiagnostics({
       polygon: resolvedSite?.polygon,
     });
+  }
+
+  async findLocalRecordForRemote(remoteRecord) {
+    const exactMatch = remoteRecord.enquiryId
+      ? await this.store.findByBydaEnquiryId(remoteRecord.enquiryId)
+      : null;
+
+    if (exactMatch) {
+      return this.linkRemoteIdentifiers(exactMatch, remoteRecord);
+    }
+
+    if (!remoteRecord.userReference) {
+      return null;
+    }
+
+    const localRecords = await this.store.list();
+    const fallbackMatch = findMatchingLocalRecord({
+      localRecords,
+      localRecordsByEnquiryId: new Map(),
+      matchedTokens: new Set(),
+      remoteRecord,
+    });
+
+    if (!fallbackMatch) {
+      return null;
+    }
+
+    return this.linkRemoteIdentifiers(fallbackMatch, remoteRecord);
+  }
+
+  async linkRemoteIdentifiers(localRecord, remoteRecord) {
+    if (!localRecord) {
+      return null;
+    }
+
+    const needsBackfill =
+      (remoteRecord.enquiryId && !localRecord.bydaEnquiryId) ||
+      (remoteRecord.externalId && !localRecord.bydaExternalId) ||
+      (remoteRecord.bydaStatus && remoteRecord.bydaStatus !== localRecord.bydaStatus);
+
+    if (!needsBackfill) {
+      return localRecord;
+    }
+
+    const updated = await this.store.update(localRecord.token, (current) => ({
+      ...current,
+      bydaEnquiryId: current.bydaEnquiryId ?? remoteRecord.enquiryId ?? null,
+      bydaExternalId: current.bydaExternalId ?? remoteRecord.externalId ?? null,
+      bydaStatus: remoteRecord.bydaStatus ?? current.bydaStatus ?? null,
+    }));
+
+    return updated ?? {
+      ...localRecord,
+      bydaEnquiryId: localRecord.bydaEnquiryId ?? remoteRecord.enquiryId ?? null,
+      bydaExternalId: localRecord.bydaExternalId ?? remoteRecord.externalId ?? null,
+      bydaStatus: remoteRecord.bydaStatus ?? localRecord.bydaStatus ?? null,
+    };
   }
 
   async resolveSite(input) {
@@ -197,4 +381,157 @@ function buildBydaPayload(input, site) {
     },
     userTimezone: input.userTimezone || "Australia/Sydney",
   };
+}
+
+function toLocalHistoryItem(record) {
+  return {
+    source: "local",
+    token: record.token,
+    trackingToken: record.token,
+    mode: record.mode,
+    status: record.status,
+    trackingStatus: record.status,
+    displayStatus: record.status ?? record.bydaStatus ?? "unknown",
+    message: record.message,
+    enquiryId: record.bydaEnquiryId ?? null,
+    externalId: record.bydaExternalId ?? null,
+    bydaStatus: record.bydaStatus ?? null,
+    readyUrl: record.fileUrl ?? record.shareUrl ?? null,
+    fileUrl: record.fileUrl ?? null,
+    shareUrl: record.shareUrl ?? null,
+    error: record.error ?? null,
+    userReference: record.input?.userReference ?? null,
+    addressLabel: record.site?.label ?? null,
+    siteSource: record.site?.source ?? null,
+    createdAt: record.createdAt ?? null,
+    updatedAt: record.updatedAt ?? null,
+    lastPolledAt: record.lastPolledAt ?? null,
+  };
+}
+
+function toRemoteHistoryItem(record) {
+  return {
+    source: "byda",
+    token: null,
+    trackingToken: null,
+    mode: "live",
+    status: null,
+    trackingStatus: null,
+    displayStatus: record.bydaStatus ?? "unknown",
+    message: "Loaded from BYDA history search.",
+    enquiryId: record.enquiryId,
+    externalId: record.externalId,
+    bydaStatus: record.bydaStatus ?? null,
+    readyUrl: null,
+    fileUrl: null,
+    shareUrl: null,
+    error: null,
+    userReference: record.userReference ?? null,
+    addressLabel: record.addressLabel ?? null,
+    siteSource: "BYDA search",
+    createdAt: record.createdAt ?? null,
+    updatedAt: record.updatedAt ?? null,
+    lastPolledAt: null,
+  };
+}
+
+function mergeHistoryItem(localRecord, remoteRecord) {
+  return {
+    source: "both",
+    token: localRecord.token,
+    trackingToken: localRecord.token,
+    mode: localRecord.mode,
+    status: localRecord.status,
+    trackingStatus: localRecord.status,
+    displayStatus: localRecord.status ?? remoteRecord.bydaStatus ?? "unknown",
+    message: localRecord.message,
+    enquiryId: remoteRecord.enquiryId ?? localRecord.bydaEnquiryId ?? null,
+    externalId: remoteRecord.externalId ?? localRecord.bydaExternalId ?? null,
+    bydaStatus: remoteRecord.bydaStatus ?? localRecord.bydaStatus ?? null,
+    readyUrl: localRecord.fileUrl ?? localRecord.shareUrl ?? null,
+    fileUrl: localRecord.fileUrl ?? null,
+    shareUrl: localRecord.shareUrl ?? null,
+    error: localRecord.error ?? null,
+    userReference: remoteRecord.userReference ?? localRecord.input?.userReference ?? null,
+    addressLabel: remoteRecord.addressLabel ?? localRecord.site?.label ?? null,
+    siteSource: localRecord.site?.source ?? "BYDA search",
+    createdAt: remoteRecord.createdAt ?? localRecord.createdAt ?? null,
+    updatedAt: remoteRecord.updatedAt ?? localRecord.updatedAt ?? null,
+    lastPolledAt: localRecord.lastPolledAt ?? null,
+  };
+}
+
+function compareIsoDates(left, right) {
+  const leftTime = Number.isFinite(Date.parse(left ?? "")) ? Date.parse(left) : 0;
+  const rightTime = Number.isFinite(Date.parse(right ?? "")) ? Date.parse(right) : 0;
+  return leftTime - rightTime;
+}
+
+function findMatchingLocalRecord({
+  localRecords,
+  localRecordsByEnquiryId,
+  matchedTokens,
+  remoteRecord,
+}) {
+  if (remoteRecord.enquiryId && localRecordsByEnquiryId.has(remoteRecord.enquiryId)) {
+    const exactMatch = localRecordsByEnquiryId.get(remoteRecord.enquiryId);
+
+    if (!matchedTokens.has(exactMatch.token)) {
+      return exactMatch;
+    }
+  }
+
+  if (!remoteRecord.userReference) {
+    return null;
+  }
+
+  const fallbackCandidates = localRecords
+    .filter((record) => !matchedTokens.has(record.token))
+    .filter((record) => record.input?.userReference === remoteRecord.userReference)
+    .sort((left, right) =>
+      Math.abs(toTimestamp(left.createdAt) - toTimestamp(remoteRecord.createdAt))
+      - Math.abs(toTimestamp(right.createdAt) - toTimestamp(remoteRecord.createdAt)),
+    );
+
+  return fallbackCandidates[0] ?? null;
+}
+
+function formatAddressLabel(address) {
+  if (!address) {
+    return null;
+  }
+
+  return [
+    address.line1,
+    address.line2,
+    address.locality,
+    address.state,
+    address.postcode,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function buildRemoteStatusMessage({ fileUrl, shareUrl }) {
+  if (fileUrl) {
+    return "Combined BYDA report is ready.";
+  }
+
+  if (shareUrl) {
+    return "BYDA historical enquiry loaded. Share link available while the combined report is checked.";
+  }
+
+  return "BYDA historical enquiry loaded.";
+}
+
+async function safelyResolve(work) {
+  try {
+    return await work();
+  } catch {
+    return null;
+  }
+}
+
+function toTimestamp(value) {
+  return Number.isFinite(Date.parse(value ?? "")) ? Date.parse(value) : 0;
 }

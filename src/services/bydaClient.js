@@ -190,6 +190,10 @@ export class BydaClient {
     return this.request("GET", `/enquiries/${enquiryId}/files/download/zip`);
   }
 
+  async requestCombinedPdf(enquiryId) {
+    return this.request("GET", `/enquiries/${enquiryId}/files/download/pdf`);
+  }
+
   async getFileUrl(fileId) {
     const response = await this.request("GET", `/system/files/${fileId}`, undefined, {
       format: "url",

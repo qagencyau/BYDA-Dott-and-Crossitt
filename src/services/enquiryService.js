@@ -278,7 +278,8 @@ export class EnquiryService {
     let fileUrl = localRecord?.fileUrl ?? null;
 
     if (!combinedFileId) {
-      const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedZip(enquiryId));
+      //const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedZip(enquiryId));
+      const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedPdf(enquiryId));
       combinedFileId = downloadRequest?.File?.id ?? null;
       combinedJobId = downloadRequest?.Job?.id ?? null;
     }

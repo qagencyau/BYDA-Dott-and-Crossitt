@@ -113,7 +113,8 @@ export class EnquiryPoller {
       let fileUrl = record.fileUrl ?? null;
 
       if (!combinedFileId) {
-        const downloadRequest = await this.bydaClient.requestCombinedZip(record.bydaEnquiryId);
+        //const downloadRequest = await this.bydaClient.requestCombinedZip(record.bydaEnquiryId);
+        const downloadRequest = await this.bydaClient.requestCombinedPdf(record.bydaEnquiryId);
         combinedFileId = downloadRequest.File?.id;
         combinedJobId = downloadRequest.Job?.id;
       }

@@ -4,8 +4,8 @@ const DEFAULT_DETAILS = [
   "Add your dates and any extra details you want included.",
   "Check your details and keep your reference number for later.",
 ];
-const ACTIVITY_OPTIONS = ["Conceptual Design", "Engineering Design", "Excavation", "Maintenance"];
-const LOCATION_OPTIONS = ["Private", "Road Reserve", "Footpath", "Nature Strip"];
+const LOCATION_TYPES = ["Private", "Road Reserve"];
+const ROAD_LOCATION_OPTIONS = ["Road", "Nature Strip", "Footpath"];
 const STATE_OPTIONS = ["NSW", "QLD", "VIC"];
 const DEFAULT_VALUE = {
   address: {
@@ -20,15 +20,28 @@ const DEFAULT_VALUE = {
     digEndAt: "",
     userReference: "",
     isPlanning: false,
-    activityType: ACTIVITY_OPTIONS[0],
-    locationType: LOCATION_OPTIONS[0],
-    authority: "",
+    activityType: "",
+    locationType: LOCATION_TYPES[0],
+    roadLocation: ROAD_LOCATION_OPTIONS[0],
+    authorityId: "",
+    otherAuthorityName: "",
     notes: "",
   },
   candidates: [],
   existingEnquiries: [],
   selectedSite: null,
-  tracking: { status: "Draft", bydaStatus: "NOT_STARTED", token: "", completedAt: "" },
+  selectedExistingEnquiry: null,
+  tracking: {
+    status: "Draft",
+    displayStatus: "Draft",
+    bydaStatus: "NOT_STARTED",
+    token: "",
+    enquiryId: null,
+    readyUrl: "",
+    message: "",
+    completedAt: "",
+    updatedAt: "",
+  },
   submitted: false,
 };
 const USER_COPY = {
@@ -39,8 +52,9 @@ const USER_COPY = {
     back: "Back",
     continue: "Continue",
     restart: "Start again",
-    choose: "Choose",
-    chosen: "Chosen",
+    choose: "Use This Site",
+    chosen: "Selected",
+    use: "Use",
     finish: "Create Reference",
   },
   chrome: {
@@ -48,12 +62,17 @@ const USER_COPY = {
   },
   notices: {
     reset: "You can start again at any time.",
-    searchShort: "Enter street number, street name and suburb to search.",
+    searchShort: "Enter street number, street name, suburb, and postcode to search.",
     datesNeeded: "Add your start and end dates to continue.",
     locationSelected: "Location selected.",
     referenceReady: "Reference number created.",
-    searchEmpty: "Enter street number, street name and suburb to see matches.",
+    searchEmpty: "Enter street number, street name, suburb, and postcode to see matches.",
     searchNone: "Check the address details to see more matches.",
+    optionsLoading: "Loading enquiry options.",
+    optionsError: "Enquiry options could not be loaded.",
+    authoritiesLoading: "Loading authorities for this location.",
+    authoritiesError: "Authorities could not be loaded for this location.",
+    createPending: "Creating the enquiry reference.",
   },
   search: {
     title: "Find the right location",
@@ -80,8 +99,11 @@ const USER_COPY = {
     yourReference: "Your reference",
     referenceHelp: "Added automatically.",
     authority: "Authority",
+    manualAuthority: "Manual authority",
+    manualAuthorityPlaceholder: "Only if not in the list",
     activityType: "Activity type",
     locationType: "Location type",
+    roadLocation: "Road reserve location",
     planning: "Planning enquiry",
     planningHelp: "Turn this on if this enquiry is only for planning.",
     notes: "Notes",
@@ -134,24 +156,12 @@ const USER_COPY = {
       status: "Complete",
     },
   },
-  candidates: {
-    top: {
-      badge: "Best match",
-      copy: "Closest match for what you typed.",
-    },
-    nearby: {
-      badge: "Another match",
-      copy: "Another nearby result you can choose instead.",
-    },
-    parcel: {
-      badge: "Parcel match",
-      copy: "A parcel result based on your search.",
-    },
-  },
   existing: {
-    title: "Past enquiries for this address",
-    copy: "Use these existing results to check what has already been lodged for the same location.",
-    prompt: "Existing results appear once enough address details are entered.",
+    title: "Past enquiries",
+    copy: "Previous enquiries for the same address are shown with the matching search result.",
+    prompt: "Past enquiries appear once enough address details are entered.",
+    loading: "Loading past enquiries for this address.",
+    loadError: "Past enquiries could not be loaded for this address.",
     none: "No existing enquiries were found for this address yet.",
     resultLabel: "Existing result",
     reference: "Reference",
@@ -177,10 +187,10 @@ template.innerHTML = `
     .stage-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:start}
     .stage-index{display:inline-flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:18px;background:var(--accentSoft);color:var(--accentStrong);font-size:1.05rem;font-weight:700}
     .stage-title,.debug-heading{margin:0;font-size:clamp(1.1rem,2vw,1.7rem);font-weight:700;line-height:1.08}
-    .notice,.selected-site,.field,.summary-card,.candidate-card,.empty-state,.history-card,.history-meta-item{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(24,38,31,.08);background:rgba(255,255,255,.8)}
+    .notice,.selected-site,.field,.summary-card,.candidate-card,.empty-state,.history-card,.history-meta-item,.search-result,.search-history-item,.tracking-status-item{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(24,38,31,.08);background:rgba(255,255,255,.8)}
     .notice[hidden],.debug-shell[hidden]{display:none}
     .notice.positive,.selected-site{background:rgba(45,141,98,.1);border-color:rgba(45,141,98,.16);color:var(--successInk)}
-    .body,.candidate-list,.button-row,.history-section,.history-list{display:flex;flex-direction:column;gap:18px}
+    .body,.candidate-list,.button-row,.history-section,.history-list,.search-results,.search-history-list,.tracking-status-list{display:flex;flex-direction:column;gap:18px}
     .form-grid,.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
     .wide{grid-column:1/-1}
     .control,.textarea{width:100%;min-height:48px;padding:12px 14px;border-radius:14px;border:1px solid rgba(24,38,31,.1);background:#fff;color:var(--ink);font:inherit;font-size:.96rem}
@@ -196,6 +206,19 @@ template.innerHTML = `
     .candidate-card.active{border-color:rgba(187,92,45,.26);background:rgba(187,92,45,.08)}
     .candidate-badge{min-height:28px;padding:4px 10px;font-size:.76rem}
     .candidate-title,.summary-value,.history-title{font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+    .search-result{gap:14px}
+    .search-result.active{border-color:rgba(187,92,45,.26);background:rgba(187,92,45,.08)}
+    .search-result-head,.tracking-status-head{display:flex;justify-content:space-between;gap:12px;align-items:start}
+    .search-result-head .button{flex-shrink:0}
+    .search-result-title,.tracking-status-value{display:block;font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+    .search-result-source,.search-result-copy,.tracking-status-copy{margin:0;color:var(--muted);line-height:1.6}
+    .search-result-source{display:block}
+    .search-result-history{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:1px solid rgba(24,38,31,.08)}
+    .search-history-list{gap:10px}
+    .search-history-item{gap:8px;padding:12px 14px;background:rgba(255,255,255,.72)}
+    .search-history-item.active{border-color:rgba(187,92,45,.26);background:rgba(187,92,45,.08)}
+    .search-history-meta{display:flex;flex-wrap:wrap;gap:8px 12px;color:var(--muted);font-size:.92rem}
+    .search-history-actions{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
     .history-head{display:flex;justify-content:space-between;gap:12px;align-items:start}
     .history-card{gap:14px}
     .history-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
@@ -204,12 +227,15 @@ template.innerHTML = `
     .history-status[data-status="ready"]{background:rgba(45,141,98,.14);color:var(--successInk)}
     .history-status[data-status="processing"]{background:rgba(196,139,31,.16);color:#7a540a}
     .history-status[data-status="historical"]{background:rgba(61,122,142,.14);color:#214554}
+    .status-media{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:76px;border-radius:22px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));color:#fff;font-size:1rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+    .tracking-status-list{gap:12px}
+    .tracking-status-item{gap:8px;padding:14px 16px;background:rgba(255,255,255,.72)}
     .progress-track{width:100%;height:10px;border-radius:999px;background:rgba(24,38,31,.1);overflow:hidden}
     .progress-fill{height:100%;border-radius:999px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));transition:width .22s ease}
     .payload{margin:0;padding:16px;border-radius:18px;background:#17211c;color:#f4efe6;font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;font-size:.82rem;line-height:1.65;overflow:auto;white-space:pre-wrap;word-break:break-word}
     code{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace}
     @media (max-width:900px){.form-grid,.summary-grid,.history-meta{grid-template-columns:1fr}}
-    @media (max-width:720px){.frame{padding:22px}.topline,.footer-actions{flex-direction:column;align-items:stretch}.stage-head{grid-template-columns:1fr}.button{width:100%}.candidate-card{grid-template-columns:1fr}}
+    @media (max-width:720px){.frame{padding:22px}.topline,.footer-actions,.search-result-head,.tracking-status-head{flex-direction:column;align-items:stretch}.stage-head{grid-template-columns:1fr}.button{width:100%}.candidate-card{grid-template-columns:1fr}}
   </style>
   <article class="panel">
     <div class="frame">
@@ -252,15 +278,121 @@ const joinParts = (parts) => parts.map((part) => String(part || "").trim()).filt
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 function formatDateLabel(value) { if (!value) return "Not set"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("en-AU",{day:"2-digit",month:"short",year:"numeric"}).format(parsed); }
 function formatDateTimeLabel(value) { if (!value) return ""; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat("en-AU",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}).format(parsed); }
+function formatDateInputValue(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
+function formatWorkDatesLabel(startAt, endAt) {
+  const start = startAt ? formatDateLabel(startAt) : "";
+  const end = endAt ? formatDateLabel(endAt) : "";
+  if (start && end) return `${start} -> ${end}`;
+  return start || end || "Not available";
+}
+function getRelativeDate(offsetDays = 0) { const value = new Date(); value.setHours(12, 0, 0, 0); value.setDate(value.getDate() + offsetDays); return value; }
+function applyDefaultEnquiryDates(enquiry = {}) {
+  if (!enquiry.digStartAt) enquiry.digStartAt = formatDateInputValue(getRelativeDate(0));
+  if (!enquiry.digEndAt) enquiry.digEndAt = formatDateInputValue(getRelativeDate(1));
+  return enquiry;
+}
+function getExistingEnquiryStatusLabel(enquiry = {}) {
+  return enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown";
+}
+function getExistingEnquiryStatusKey(enquiry = {}) {
+  return String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase();
+}
+function getAddressHistoryEndpoint(host) {
+  return getTrimmedAttribute(host, "address-history-endpoint") || "/api/enquiries/by-address";
+}
+function getAddressSearchEndpoint(host) {
+  return getTrimmedAttribute(host, "address-search-endpoint") || "/api/addresses/search";
+}
+function getOptionsEndpoint(host) {
+  return getTrimmedAttribute(host, "options-endpoint") || "/api/options";
+}
+function getAuthoritiesEndpoint(host) {
+  return getTrimmedAttribute(host, "authorities-endpoint") || "/api/organisations/search";
+}
+function getEnquiryCreateEndpoint(host) {
+  return getTrimmedAttribute(host, "enquiry-create-endpoint") || "/api/enquiries";
+}
+function getEnquiryStatusEndpoint(host, token) {
+  const base = getTrimmedAttribute(host, "enquiry-status-endpoint") || "/api/enquiries";
+  return `${base.replace(/\/$/, "")}/${encodeURIComponent(token)}`;
+}
+function getRemoteEnquiryStatusEndpoint(host, enquiryId) {
+  const base = getTrimmedAttribute(host, "remote-enquiry-status-endpoint") || "/api/enquiries/byda";
+  return `${base.replace(/\/$/, "")}/${encodeURIComponent(enquiryId)}`;
+}
+function getPollIntervalMs(host) {
+  const value = Number.parseInt(getTrimmedAttribute(host, "poll-interval-ms"), 10);
+  return Number.isFinite(value) && value >= 1000 ? value : 5000;
+}
+async function fetchJsonForComponent(url, init) {
+  const response = await fetch(url, init);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const details = typeof payload.details === "string"
+      ? payload.details
+      : payload.details
+        ? JSON.stringify(payload.details)
+        : "";
+    const requestId = payload.requestId ? ` Request ID: ${payload.requestId}.` : "";
+    throw new Error(`${payload.error || "Request failed."}${details ? ` ${details}` : ""}${requestId}`.trim());
+  }
+  return payload;
+}
+function getTrackingTone(statusValue = "") {
+  const normalized = String(statusValue || "").toLowerCase();
+  if (normalized.includes("fail") || normalized.includes("error") || normalized.includes("reject")) return "critical";
+  if (normalized.includes("pending") || normalized.includes("process") || normalized.includes("wait")) return "warning";
+  if (normalized.includes("histor")) return "neutral";
+  if (normalized.includes("ready") || normalized.includes("complete") || normalized.includes("received")) return "success";
+  return "neutral";
+}
+function normalizeCandidate(site = {}) {
+  const id = site.id || `${site.label || "site"}-${site.state || ""}`;
+  const title = site.label || formatAddressLabel(site.address) || "Resolved address";
+  return {
+    id,
+    title,
+    source: site.source || "Resolved address",
+    copy: "",
+    resolvedSite: {
+      ...site,
+      id,
+      label: site.label || title,
+      title,
+    },
+  };
+}
+function normalizeExistingEnquiry(record = {}) {
+  return {
+    ...record,
+    id:
+      record.id ||
+      record.trackingToken ||
+      (record.enquiryId ? `enquiry-${record.enquiryId}` : "") ||
+      [record.userReference, record.createdAt].filter(Boolean).join("-") ||
+      `existing-${Date.now()}`,
+    digStartAt: record.digStartAt || "",
+    digEndAt: record.digEndAt || "",
+  };
+}
+function getSiteDisplayLabel(site = {}) {
+  return site.title || site.label || formatAddressLabel(site.address) || "";
+}
+function getAuthorityLabel(authority = {}) {
+  return authority.organisationType ? `${authority.name} (${authority.organisationType})` : authority.name;
+}
 function createInitialValue(input = {}) {
   const next = cloneValue(DEFAULT_VALUE);
   if (input.address && typeof input.address === "object") Object.assign(next.address, input.address);
   if (input.enquiry && typeof input.enquiry === "object") Object.assign(next.enquiry, input.enquiry);
+  if (next.enquiry.authority && !next.enquiry.otherAuthorityName) next.enquiry.otherAuthorityName = next.enquiry.authority;
   if (input.tracking && typeof input.tracking === "object") Object.assign(next.tracking, input.tracking);
-  if (Array.isArray(input.candidates)) next.candidates = input.candidates.map((candidate) => ({ ...candidate }));
-  if (Array.isArray(input.existingEnquiries)) next.existingEnquiries = input.existingEnquiries.map((enquiry) => ({ ...enquiry }));
+  if (Array.isArray(input.candidates)) next.candidates = input.candidates.map((candidate) => candidate.resolvedSite ? { ...candidate } : normalizeCandidate(candidate));
+  if (Array.isArray(input.existingEnquiries)) next.existingEnquiries = input.existingEnquiries.map((enquiry) => normalizeExistingEnquiry(enquiry));
   if (input.selectedSite && typeof input.selectedSite === "object") next.selectedSite = { ...input.selectedSite };
-  next.submitted = Boolean(input.submitted);
+  if (input.selectedExistingEnquiry && typeof input.selectedExistingEnquiry === "object") next.selectedExistingEnquiry = normalizeExistingEnquiry(input.selectedExistingEnquiry);
+  applyDefaultEnquiryDates(next.enquiry);
+  next.submitted = Boolean(input.submitted || next.selectedExistingEnquiry);
   return next;
 }
 function buildStageItems(host) {
@@ -271,9 +403,6 @@ function buildStageItems(host) {
 function buildIdentifierPart(seed = "", fallback = "TEST") {
   const cleaned = String(seed || "").toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 8);
   return cleaned || fallback;
-}
-function generateToken(seed = "") {
-  return `IET-${buildIdentifierPart(seed)}-${String(Date.now()).slice(-6)}`;
 }
 function generateUserReference(seed = "") {
   return `IET-REF-${buildIdentifierPart(seed, "JOB")}-${String(Date.now()).slice(-6)}`;
@@ -287,96 +416,12 @@ function hasAddressSearchInput(address = {}) {
   return Boolean(
     String(address.streetNumber || "").trim() &&
     String(address.streetName || "").trim().length >= 2 &&
-    String(address.suburb || "").trim().length >= 2
+    String(address.suburb || "").trim().length >= 2 &&
+    /^\d{4}$/.test(String(address.postcode || "").trim())
   );
 }
 function getAddressSeed(address = {}) {
   return formatAddressLabel(address) || String(address.searchText || "").trim();
-}
-function getAlternateStreetNumber(streetNumber = "") {
-  const parsed = Number.parseInt(String(streetNumber).trim(), 10);
-  return Number.isNaN(parsed) ? String(streetNumber || "").trim() : String(parsed + 2);
-}
-function generateCandidates(address) {
-  const query = formatAddressLabel(address);
-  if (!hasAddressSearchInput(address)) return [];
-
-  const alternateAddress = formatAddressLabel({
-    ...address,
-    streetNumber: getAlternateStreetNumber(address.streetNumber),
-  });
-
-  return [
-    {
-      id: "top-result",
-      title: query,
-      copy: USER_COPY.candidates.top.copy,
-      badge: USER_COPY.candidates.top.badge,
-    },
-    {
-      id: "nearby-result",
-      title: alternateAddress || query,
-      copy: USER_COPY.candidates.nearby.copy,
-      badge: USER_COPY.candidates.nearby.badge,
-    },
-    {
-      id: "parcel-result",
-      title: `Parcel near ${query}`,
-      copy: USER_COPY.candidates.parcel.copy,
-      badge: USER_COPY.candidates.parcel.badge,
-    },
-  ];
-}
-
-function generateExistingEnquiries(address) {
-  const label = formatAddressLabel(address);
-  if (!label || !hasAddressSearchInput(address)) return [];
-
-  const seed = buildIdentifierPart(getAddressSeed(address), "SITE");
-  const seedNumber = getSeedNumber(seed);
-  const baseTime = Date.UTC(2026, 2, 20 + (seedNumber % 7), 8 + (seedNumber % 6), 15, 0);
-
-  return [
-    {
-      id: `existing-${seed}-ready`,
-      addressLabel: label,
-      userReference: `IET-REF-${seed}-01`,
-      trackingToken: `IET-${seed}-A1`,
-      displayStatus: "Ready",
-      status: "ready",
-      bydaStatus: "ALL_RECEIVED",
-      source: "both",
-      createdAt: new Date(baseTime).toISOString(),
-      message: "Combined report already generated for this address.",
-    },
-    {
-      id: `existing-${seed}-processing`,
-      addressLabel: label,
-      userReference: `IET-REF-${seed}-02`,
-      trackingToken: `IET-${seed}-B2`,
-      displayStatus: "Processing",
-      status: "processing",
-      bydaStatus: "PENDING_RESPONSES",
-      source: "local",
-      createdAt: new Date(baseTime + 1000 * 60 * 60 * 14).toISOString(),
-      message: "Recent enquiry is still waiting on utility responses.",
-    },
-    {
-      id: `existing-${seed}-historical`,
-      addressLabel: label,
-      enquiryId: 110000 + seedNumber,
-      displayStatus: "Historical",
-      status: "historical",
-      bydaStatus: "ALL_RECEIVED",
-      source: "byda",
-      createdAt: new Date(baseTime - 1000 * 60 * 60 * 24 * 6).toISOString(),
-      message: "Historical BYDA result found for the same address.",
-    },
-  ].sort((left, right) => compareIsoDates(right.createdAt, left.createdAt));
-}
-
-function getSeedNumber(seed = "") {
-  return [...String(seed)].reduce((total, character) => total + character.charCodeAt(0), 0);
 }
 
 function compareIsoDates(left, right) {
@@ -416,6 +461,22 @@ export class BydaProcessSteps extends HTMLElement {
     this.notice = "";
     this.noticeTone = "neutral";
     this.syncingAttribute = false;
+    this.candidatesLoading = false;
+    this.candidatesError = "";
+    this.existingEnquiriesLoading = false;
+    this.existingEnquiriesError = "";
+    this.addressResultsRequestId = 0;
+    this.addressResultsAbortController = null;
+    this.addressResultsDebounce = null;
+    this.optionsData = null;
+    this.optionsLoading = false;
+    this.optionsError = "";
+    this.authorities = [];
+    this.authoritiesLoading = false;
+    this.authoritiesError = "";
+    this.submissionLoading = false;
+    this.statusPollHandle = null;
+    this.statusRequestAbortController = null;
     this.elements = {
       heading: this.shadowRoot.querySelector(".heading"),
       count: this.shadowRoot.querySelector(".count"),
@@ -438,10 +499,20 @@ export class BydaProcessSteps extends HTMLElement {
     this.shadowRoot.addEventListener("input", this.handleFieldChange);
     this.shadowRoot.addEventListener("change", this.handleFieldChange);
     this.syncStepFromAttributes();
+    void this.loadOptions();
+    if (this.state.selectedSite && !this.state.selectedExistingEnquiry) void this.loadAuthorities(this.state.selectedSite);
+    if (this.canGenerateCandidates() && (!this.state.candidates.length || !this.state.existingEnquiries.length)) this.scheduleAddressResultsRefresh({ immediate: true });
+    if (this.state.submitted) void this.resumeTrackingState();
     this.render();
   }
 
   disconnectedCallback() {
+    this.cancelAddressResultsRefresh();
+    this.stopStatusPolling();
+    if (this.statusRequestAbortController) {
+      this.statusRequestAbortController.abort();
+      this.statusRequestAbortController = null;
+    }
     this.shadowRoot.removeEventListener("click", this.handleClick);
     this.shadowRoot.removeEventListener("input", this.handleFieldChange);
     this.shadowRoot.removeEventListener("change", this.handleFieldChange);
@@ -456,32 +527,339 @@ export class BydaProcessSteps extends HTMLElement {
   get currentStep() { return this.stepIndex + 1; }
   set currentStep(nextStep) { this.goToStep(nextStep); }
   get value() { return cloneValue(this.buildEventPayload()); }
-  set value(nextValue) { this.state = createInitialValue(nextValue); this.notice = ""; this.noticeTone = "neutral"; if (this.isConnected) this.render(); }
+  set value(nextValue) {
+    this.cancelAddressResultsRefresh();
+    this.stopStatusPolling();
+    this.cancelStatusRequest();
+    this.state = createInitialValue(nextValue);
+    this.notice = "";
+    this.noticeTone = "neutral";
+    this.candidatesError = "";
+    this.candidatesLoading = false;
+    this.existingEnquiriesError = "";
+    this.existingEnquiriesLoading = false;
+    this.authorities = [];
+    this.authoritiesError = "";
+    this.authoritiesLoading = false;
+    this.submissionLoading = false;
+    if (this.isConnected && this.canGenerateCandidates() && (!this.state.candidates.length || !this.state.existingEnquiries.length)) this.scheduleAddressResultsRefresh({ immediate: true });
+    if (this.isConnected && this.state.selectedSite && !this.state.selectedExistingEnquiry) void this.loadAuthorities(this.state.selectedSite);
+    if (this.isConnected && this.state.submitted) void this.resumeTrackingState();
+    if (this.isConnected) this.render();
+  }
 
-  reset() { this.state = createInitialValue(); this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
+  reset() { this.cancelAddressResultsRefresh(); this.stopStatusPolling(); this.cancelStatusRequest(); this.state = createInitialValue(); this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.candidatesError = ""; this.candidatesLoading = false; this.existingEnquiriesError = ""; this.existingEnquiriesLoading = false; this.authorities = []; this.authoritiesError = ""; this.authoritiesLoading = false; this.submissionLoading = false; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
   goToStep(nextStep) { this.setStepIndex(parseInteger(nextStep, 1) - 1, { emitEvent: true, reason: "programmatic" }); }
   canGenerateCandidates() { return hasAddressSearchInput(this.state.address); }
   isStepOneComplete() { return Boolean(this.state.selectedSite); }
-  isStepTwoComplete() { const e = this.state.enquiry; return Boolean(this.isStepOneComplete() && e.digStartAt && e.digEndAt); }
+  isStepTwoComplete() { const e = this.state.enquiry; return Boolean(this.isStepOneComplete() && e.digStartAt && e.digEndAt && e.activityType && e.locationType && (e.locationType !== "Road Reserve" || e.roadLocation)); }
   isStepThreeComplete() { return Boolean(this.state.submitted); }
   canAdvance() { return this.stepIndex === 0 ? this.isStepOneComplete() : this.stepIndex === 1 ? this.isStepTwoComplete() : false; }
   ensureAutoUserReference() {
     if (this.state.enquiry.userReference) return;
     this.state.enquiry.userReference = generateUserReference(this.state.selectedSite?.id || getAddressSeed(this.state.address));
   }
+  ensureEnquiryDefaults() {
+    applyDefaultEnquiryDates(this.state.enquiry);
+    const activityOptions = this.getActivityOptions();
+    const locationTypes = this.optionsData?.locationTypes?.length ? this.optionsData.locationTypes : LOCATION_TYPES;
+    const roadLocations = this.optionsData?.locationsInRoad?.length ? this.optionsData.locationsInRoad : ROAD_LOCATION_OPTIONS;
+    if (!locationTypes.includes(this.state.enquiry.locationType)) this.state.enquiry.locationType = locationTypes[0] || LOCATION_TYPES[0];
+    if (!roadLocations.includes(this.state.enquiry.roadLocation)) this.state.enquiry.roadLocation = roadLocations[0] || ROAD_LOCATION_OPTIONS[0];
+    if (activityOptions.length && !activityOptions.some((option) => option.code === this.state.enquiry.activityType)) {
+      this.state.enquiry.activityType = activityOptions[0].code;
+    }
+    if (this.state.selectedSite && !this.state.selectedExistingEnquiry) this.ensureAutoUserReference();
+  }
+  getActivityOptions() {
+    const nextOptions = this.state.enquiry.isPlanning
+      ? this.optionsData?.planningActivityTypes
+      : this.optionsData?.excavationActivityTypes;
+    return Array.isArray(nextOptions) ? nextOptions : [];
+  }
   getEnquiryProgress() {
-    if (this.state.submitted) return USER_COPY.progress.complete;
+    if (this.state.submitted) {
+      const submittedStatus = String(this.state.tracking.displayStatus || this.state.tracking.status || this.state.tracking.bydaStatus || "").toLowerCase();
+      if (submittedStatus.includes("ready") || submittedStatus.includes("complete") || submittedStatus.includes("received")) {
+        return USER_COPY.progress.complete;
+      }
+      return {
+        label: this.state.tracking.displayStatus || this.state.tracking.status || "Submitted",
+        percent: 92,
+        detail: this.state.tracking.message || "Your enquiry has been submitted and is being processed.",
+        status: this.state.tracking.displayStatus || this.state.tracking.status || "Submitted",
+      };
+    }
     if (this.isStepTwoComplete()) return USER_COPY.progress.ready;
     if (this.isStepOneComplete()) return USER_COPY.progress.locationSelected;
     if (this.canGenerateCandidates()) return USER_COPY.progress.searching;
     return USER_COPY.progress.notStarted;
   }
+  async loadOptions() {
+    this.optionsLoading = true;
+    this.optionsError = "";
+    this.render();
+    try {
+      this.optionsData = await fetchJsonForComponent(getOptionsEndpoint(this));
+      this.optionsLoading = false;
+      this.optionsError = "";
+      this.ensureEnquiryDefaults();
+      this.render();
+      this.emitComponentEvent("byda-process-change", { reason: "options-loaded" });
+    } catch (error) {
+      this.optionsLoading = false;
+      this.optionsError = error instanceof Error ? error.message : USER_COPY.notices.optionsError;
+      this.render();
+    }
+  }
+  async loadAuthorities(site) {
+    if (!site) {
+      this.authorities = [];
+      this.authoritiesError = "";
+      this.authoritiesLoading = false;
+      return;
+    }
+    this.authoritiesLoading = true;
+    this.authoritiesError = "";
+    this.authorities = [];
+    this.render();
+    try {
+      const payload = await fetchJsonForComponent(getAuthoritiesEndpoint(this), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ resolvedSite: site }),
+      });
+      this.authorities = Array.isArray(payload.organisations) ? payload.organisations : [];
+      this.authoritiesLoading = false;
+      this.authoritiesError = "";
+      if (!this.authorities.some((authority) => String(authority.id) === String(this.state.enquiry.authorityId || ""))) {
+        this.state.enquiry.authorityId = "";
+      }
+      this.render();
+    } catch (error) {
+      this.authorities = [];
+      this.authoritiesLoading = false;
+      this.authoritiesError = error instanceof Error ? error.message : USER_COPY.notices.authoritiesError;
+      this.render();
+    }
+  }
+  cancelAddressResultsRefresh() {
+    if (this.addressResultsDebounce) {
+      clearTimeout(this.addressResultsDebounce);
+      this.addressResultsDebounce = null;
+    }
+    if (this.addressResultsAbortController) {
+      this.addressResultsAbortController.abort();
+      this.addressResultsAbortController = null;
+    }
+  }
+  scheduleAddressResultsRefresh({ immediate = false } = {}) {
+    this.cancelAddressResultsRefresh();
+    if (!this.canGenerateCandidates()) {
+      this.candidatesLoading = false;
+      this.candidatesError = "";
+      this.existingEnquiriesLoading = false;
+      this.existingEnquiriesError = "";
+      this.state.candidates = [];
+      this.state.existingEnquiries = [];
+      return;
+    }
+    const runRefresh = () => {
+      this.addressResultsDebounce = null;
+      void this.loadAddressResults();
+    };
+    if (immediate) {
+      runRefresh();
+      return;
+    }
+    this.addressResultsDebounce = setTimeout(runRefresh, 250);
+  }
+  async loadAddressResults() {
+    if (!this.canGenerateCandidates()) return;
+    const requestId = ++this.addressResultsRequestId;
+    this.addressResultsAbortController = new AbortController();
+    this.candidatesLoading = true;
+    this.candidatesError = "";
+    this.existingEnquiriesLoading = true;
+    this.existingEnquiriesError = "";
+    this.state.candidates = [];
+    this.state.existingEnquiries = [];
+    this.render();
+    const params = new URLSearchParams({
+      streetNumber: this.state.address.streetNumber,
+      streetName: this.state.address.streetName,
+      suburb: this.state.address.suburb,
+      state: this.state.address.state,
+      postcode: this.state.address.postcode,
+      limit: "6",
+      source: "all",
+    });
+    try {
+      const [candidatesResult, historyResult] = await Promise.allSettled([
+        fetchJsonForComponent(`${getAddressSearchEndpoint(this)}?${params.toString()}`, {
+          signal: this.addressResultsAbortController.signal,
+        }),
+        fetchJsonForComponent(`${getAddressHistoryEndpoint(this)}?${params.toString()}`, {
+          signal: this.addressResultsAbortController.signal,
+        }),
+      ]);
+      if (requestId !== this.addressResultsRequestId) return;
+      this.candidatesLoading = false;
+      this.existingEnquiriesLoading = false;
+      if (candidatesResult.status === "fulfilled") {
+        this.state.candidates = Array.isArray(candidatesResult.value.sites)
+          ? candidatesResult.value.sites.map((site) => normalizeCandidate(site))
+          : [];
+        this.candidatesError = "";
+      } else {
+        this.state.candidates = [];
+        this.candidatesError = candidatesResult.reason instanceof Error ? candidatesResult.reason.message : USER_COPY.notices.searchNone;
+      }
+      if (historyResult.status === "fulfilled") {
+        this.state.existingEnquiries = Array.isArray(historyResult.value.enquiries)
+          ? historyResult.value.enquiries.map((enquiry) => normalizeExistingEnquiry(enquiry))
+          : [];
+        this.existingEnquiriesError = "";
+      } else {
+        this.state.existingEnquiries = [];
+        this.existingEnquiriesError = historyResult.reason instanceof Error ? historyResult.reason.message : USER_COPY.existing.loadError;
+      }
+      this.render();
+      this.emitComponentEvent("byda-process-change", { reason: "address-results-loaded" });
+    } catch (error) {
+      if (error?.name === "AbortError" || requestId !== this.addressResultsRequestId) return;
+      this.candidatesLoading = false;
+      this.candidatesError = error instanceof Error ? error.message : USER_COPY.notices.searchNone;
+      this.state.candidates = [];
+      this.state.existingEnquiries = [];
+      this.existingEnquiriesLoading = false;
+      this.existingEnquiriesError = error instanceof Error ? error.message : USER_COPY.existing.loadError;
+      this.render();
+    } finally {
+      if (requestId === this.addressResultsRequestId) this.addressResultsAbortController = null;
+    }
+  }
+  cancelStatusRequest() {
+    if (this.statusRequestAbortController) {
+      this.statusRequestAbortController.abort();
+      this.statusRequestAbortController = null;
+    }
+  }
+  stopStatusPolling() {
+    if (!this.statusPollHandle) return;
+    clearInterval(this.statusPollHandle);
+    this.statusPollHandle = null;
+  }
+  startStatusPolling(target) {
+    this.stopStatusPolling();
+    this.statusPollHandle = setInterval(() => {
+      const work = target.trackingToken
+        ? this.loadTrackingStatus(target.trackingToken)
+        : this.loadRemoteEnquiryStatus(target.enquiryId);
+      work.catch((error) => {
+        this.notice = error instanceof Error ? error.message : "Status polling failed.";
+        this.noticeTone = "neutral";
+        this.render();
+        this.stopStatusPolling();
+      });
+    }, getPollIntervalMs(this));
+  }
+  applyStatusPayload(status) {
+    const displayStatus = status.displayStatus || status.status || status.bydaStatus || "unknown";
+    this.state.submitted = true;
+    this.state.tracking.status = status.status || displayStatus;
+    this.state.tracking.displayStatus = displayStatus;
+    this.state.tracking.bydaStatus = status.bydaStatus || this.state.tracking.bydaStatus || "NOT_STARTED";
+    this.state.tracking.token = status.trackingToken || status.token || this.state.tracking.token;
+    this.state.tracking.enquiryId = status.enquiryId ?? this.state.tracking.enquiryId ?? null;
+    this.state.tracking.readyUrl = status.readyUrl || "";
+    this.state.tracking.message = status.message || "";
+    this.state.tracking.completedAt = status.updatedAt || status.createdAt || this.state.tracking.completedAt || "";
+    this.state.tracking.updatedAt = status.updatedAt || status.createdAt || "";
+    if (status.userReference) this.state.enquiry.userReference = status.userReference;
+    if (status.site) {
+      this.state.selectedSite = { ...status.site };
+    } else if (status.addressLabel && !this.state.selectedSite) {
+      this.state.selectedSite = {
+        id: `status-site-${status.enquiryId || this.state.tracking.token || buildIdentifierPart(status.addressLabel, "SITE")}`,
+        label: status.addressLabel,
+        title: status.addressLabel,
+        source: status.source === "byda" ? "BYDA history" : "Tracked enquiry",
+      };
+    }
+    if (this.state.selectedExistingEnquiry) {
+      this.state.selectedExistingEnquiry = normalizeExistingEnquiry({
+        ...this.state.selectedExistingEnquiry,
+        ...status,
+      });
+    }
+    const terminal = ["ready", "failed"].includes(String(status.status || "").toLowerCase());
+    if (terminal) this.stopStatusPolling();
+    this.render();
+    return status;
+  }
+  async loadTrackingStatus(token) {
+    this.cancelStatusRequest();
+    this.statusRequestAbortController = new AbortController();
+    try {
+      const status = await fetchJsonForComponent(getEnquiryStatusEndpoint(this, token), {
+        signal: this.statusRequestAbortController.signal,
+      });
+      return this.applyStatusPayload(status);
+    } finally {
+      this.statusRequestAbortController = null;
+    }
+  }
+  async loadRemoteEnquiryStatus(enquiryId) {
+    this.cancelStatusRequest();
+    this.statusRequestAbortController = new AbortController();
+    try {
+      const status = await fetchJsonForComponent(getRemoteEnquiryStatusEndpoint(this, enquiryId), {
+        signal: this.statusRequestAbortController.signal,
+      });
+      return this.applyStatusPayload(status);
+    } finally {
+      this.statusRequestAbortController = null;
+    }
+  }
+  async resumeTrackingState() {
+    try {
+      let status = null;
+      if (this.state.tracking.token) {
+        status = await this.loadTrackingStatus(this.state.tracking.token);
+      } else if (this.state.tracking.enquiryId) {
+        status = await this.loadRemoteEnquiryStatus(this.state.tracking.enquiryId);
+      } else {
+        this.render();
+        return;
+      }
+      const nextToken = status?.trackingToken || this.state.tracking.token;
+      const nextEnquiryId = status?.enquiryId ?? this.state.tracking.enquiryId;
+      if (status && !["ready", "failed"].includes(String(status.status || "").toLowerCase())) {
+        if (nextToken) this.startStatusPolling({ trackingToken: nextToken });
+        else if (nextEnquiryId) this.startStatusPolling({ enquiryId: nextEnquiryId });
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      this.notice = error instanceof Error ? error.message : "Tracking status could not be loaded.";
+      this.noticeTone = "neutral";
+      this.render();
+    }
+  }
   syncAddressResults() {
-    this.state.candidates = this.canGenerateCandidates() ? generateCandidates(this.state.address) : [];
-    this.state.existingEnquiries = this.canGenerateCandidates() ? generateExistingEnquiries(this.state.address) : [];
+    this.stopStatusPolling();
+    this.cancelStatusRequest();
+    this.state.candidates = [];
+    this.state.existingEnquiries = [];
     this.state.selectedSite = null;
+    this.authorities = [];
+    this.authoritiesError = "";
+    this.authoritiesLoading = false;
     this.state.enquiry.userReference = "";
     this.setDraftTracking();
+    this.scheduleAddressResultsRefresh();
   }
 
   syncStepFromAttributes() { this.stepIndex = Math.min(Math.max(parseInteger(this.getAttribute("current-step"), 1) - 1, 0), DEFAULT_STEPS.length - 1); }
@@ -496,100 +874,231 @@ export class BydaProcessSteps extends HTMLElement {
     if (changed && emitEvent) this.emitComponentEvent("byda-process-step-change", { reason });
   }
   emitComponentEvent(name, detail = {}) { this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail: { ...detail, currentStep: this.currentStep, stepTitle: buildStageItems(this)[this.stepIndex]?.title || "", value: this.value } })); }
-  buildEventPayload() { return { address: { ...this.state.address }, candidates: this.state.candidates.map((candidate) => ({ ...candidate })), existingEnquiries: this.state.existingEnquiries.map((enquiry) => ({ ...enquiry })), selectedSite: this.state.selectedSite ? { ...this.state.selectedSite } : null, enquiry: { ...this.state.enquiry }, tracking: { ...this.state.tracking }, submitted: this.state.submitted }; }
-  setDraftTracking() { this.state.submitted = false; this.state.tracking.status = "Draft"; this.state.tracking.bydaStatus = "NOT_STARTED"; this.state.tracking.token = ""; this.state.tracking.completedAt = ""; }
+  buildEventPayload() { return { address: { ...this.state.address }, candidates: this.state.candidates.map((candidate) => ({ ...candidate })), existingEnquiries: this.state.existingEnquiries.map((enquiry) => ({ ...enquiry })), selectedSite: this.state.selectedSite ? { ...this.state.selectedSite } : null, selectedExistingEnquiry: this.state.selectedExistingEnquiry ? { ...this.state.selectedExistingEnquiry } : null, enquiry: { ...this.state.enquiry }, tracking: { ...this.state.tracking }, submitted: this.state.submitted }; }
+  setDraftTracking() { this.state.submitted = false; this.state.selectedExistingEnquiry = null; this.state.tracking.status = "Draft"; this.state.tracking.displayStatus = "Draft"; this.state.tracking.bydaStatus = "NOT_STARTED"; this.state.tracking.token = ""; this.state.tracking.enquiryId = null; this.state.tracking.readyUrl = ""; this.state.tracking.message = ""; this.state.tracking.completedAt = ""; this.state.tracking.updatedAt = ""; }
+  buildEnquiryPayload() {
+    this.ensureEnquiryDefaults();
+    const authorityId = String(this.state.enquiry.authorityId || "").trim();
+    const otherAuthorityName = String(this.state.enquiry.otherAuthorityName || "").trim();
+    return {
+      address: { ...this.state.address },
+      resolvedSite: this.state.selectedSite ? { ...this.state.selectedSite } : undefined,
+      userReference: String(this.state.enquiry.userReference || "").trim() || undefined,
+      digStartAt: this.state.enquiry.digStartAt,
+      digEndAt: this.state.enquiry.digEndAt,
+      isPlanningJob: Boolean(this.state.enquiry.isPlanning),
+      activityTypes: [this.state.enquiry.activityType].filter(Boolean),
+      locationTypes: [this.state.enquiry.locationType].filter(Boolean),
+      locationsInRoad:
+        this.state.enquiry.locationType === "Road Reserve"
+          ? [this.state.enquiry.roadLocation].filter(Boolean)
+          : [],
+      authorityId: authorityId ? Number(authorityId) : undefined,
+      otherAuthorityName: otherAuthorityName || undefined,
+      notes: String(this.state.enquiry.notes || "").trim() || undefined,
+      userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  }
 
   searchCandidates() {
     if (!this.canGenerateCandidates()) { this.notice = USER_COPY.notices.searchShort; this.noticeTone = "neutral"; this.render(); return; }
     this.syncAddressResults();
-    this.notice = `${this.state.candidates.length} matches found. ${this.state.existingEnquiries.length} existing result${this.state.existingEnquiries.length === 1 ? "" : "s"} loaded.`; this.noticeTone = "positive"; this.render(); this.emitComponentEvent("byda-process-change", { reason: "search" });
+    this.notice = "Searching address data."; this.noticeTone = "positive"; this.render(); this.emitComponentEvent("byda-process-change", { reason: "search" });
   }
 
-  completeFlow() {
+  async completeFlow() {
     if (!this.isStepTwoComplete()) { this.notice = USER_COPY.notices.datesNeeded; this.noticeTone = "neutral"; this.setStepIndex(1, { emitEvent: true, reason: "incomplete-enquiry" }); return; }
-    this.ensureAutoUserReference();
-    this.state.submitted = true; this.state.tracking.status = USER_COPY.progress.complete.status; this.state.tracking.bydaStatus = USER_COPY.progress.complete.status; this.state.tracking.token = this.state.tracking.token || generateToken(this.state.selectedSite?.id || getAddressSeed(this.state.address) || this.state.enquiry.userReference); this.state.tracking.completedAt = new Date().toISOString();
-    this.notice = USER_COPY.notices.referenceReady; this.noticeTone = "positive"; this.render(); this.emitComponentEvent("byda-process-change", { reason: "complete" }); this.emitComponentEvent("byda-process-complete", { reason: "complete" });
+    if (this.submissionLoading) return;
+    this.stopStatusPolling();
+    this.cancelStatusRequest();
+    this.state.selectedExistingEnquiry = null;
+    this.ensureEnquiryDefaults();
+    this.submissionLoading = true;
+    this.notice = USER_COPY.notices.createPending;
+    this.noticeTone = "neutral";
+    this.render();
+    try {
+      const result = await fetchJsonForComponent(getEnquiryCreateEndpoint(this), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(this.buildEnquiryPayload()),
+      });
+      this.state.submitted = true;
+      this.state.tracking.token = result.token || "";
+      this.state.tracking.enquiryId = result.enquiryId ?? null;
+      this.state.tracking.status = result.status || "processing";
+      this.state.tracking.displayStatus = result.status || "processing";
+      this.state.tracking.bydaStatus = this.state.tracking.bydaStatus === "NOT_STARTED" ? "CREATED" : this.state.tracking.bydaStatus;
+      this.state.tracking.message = result.message || "Enquiry lodged with BYDA. Waiting for status updates.";
+      this.state.tracking.completedAt = new Date().toISOString();
+      this.state.tracking.updatedAt = this.state.tracking.completedAt;
+      this.render();
+      const status = result.token ? await this.loadTrackingStatus(result.token) : null;
+      const latestStatus = status || {
+        status: result.status || "processing",
+        displayStatus: result.status || "processing",
+        token: result.token || "",
+      };
+      if (!["ready", "failed"].includes(String(latestStatus.status || "").toLowerCase()) && result.token) {
+        this.startStatusPolling({ trackingToken: result.token });
+      }
+      this.notice = ["ready", "failed"].includes(String(latestStatus.status || "").toLowerCase())
+        ? USER_COPY.notices.referenceReady
+        : "Enquiry submitted. Status updates will appear here automatically.";
+      this.noticeTone = String(latestStatus.status || "").toLowerCase() === "failed" ? "neutral" : "positive";
+      this.emitComponentEvent("byda-process-change", { reason: "complete" });
+      this.emitComponentEvent("byda-process-complete", { reason: "complete" });
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : "Enquiry could not be created.";
+      this.noticeTone = "neutral";
+    } finally {
+      this.submissionLoading = false;
+      this.render();
+    }
+  }
+  async useExistingEnquiry(existingEnquiry) {
+    const selectedHistory = normalizeExistingEnquiry(existingEnquiry);
+    const matchingCandidate = this.state.candidates.find((candidate) => candidate.title === (selectedHistory.addressLabel || ""));
+    this.stopStatusPolling();
+    this.cancelStatusRequest();
+    this.state.selectedExistingEnquiry = selectedHistory;
+    this.state.selectedSite = matchingCandidate?.resolvedSite ? { ...matchingCandidate.resolvedSite } : {
+      id: `history-site-${selectedHistory.id || buildIdentifierPart(formatExistingReference(selectedHistory), "SITE")}`,
+      label: selectedHistory.addressLabel || formatAddressLabel(this.state.address) || formatExistingReference(selectedHistory),
+      title: selectedHistory.addressLabel || formatAddressLabel(this.state.address) || formatExistingReference(selectedHistory),
+      source: `${formatExistingSource(selectedHistory.source)} history`,
+    };
+    this.state.enquiry.userReference = selectedHistory.userReference || "";
+    this.state.enquiry.digStartAt = selectedHistory.digStartAt || this.state.enquiry.digStartAt;
+    this.state.enquiry.digEndAt = selectedHistory.digEndAt || this.state.enquiry.digEndAt;
+    this.state.submitted = true;
+    this.state.tracking.status = selectedHistory.status || getExistingEnquiryStatusLabel(selectedHistory);
+    this.state.tracking.displayStatus = getExistingEnquiryStatusLabel(selectedHistory);
+    this.state.tracking.bydaStatus = selectedHistory.bydaStatus || getExistingEnquiryStatusLabel(selectedHistory);
+    this.state.tracking.token = selectedHistory.trackingToken || "";
+    this.state.tracking.enquiryId = selectedHistory.enquiryId ?? null;
+    this.state.tracking.readyUrl = selectedHistory.readyUrl || "";
+    this.state.tracking.message = selectedHistory.message || "";
+    this.state.tracking.completedAt = selectedHistory.updatedAt || selectedHistory.createdAt || "";
+    this.state.tracking.updatedAt = selectedHistory.updatedAt || selectedHistory.createdAt || "";
+    this.notice = "Past enquiry loaded.";
+    this.noticeTone = "positive";
+    this.setStepIndex(2, { emitEvent: true, reason: "existing-enquiry" });
+    try {
+      let status = null;
+      if (selectedHistory.trackingToken) {
+        status = await this.loadTrackingStatus(selectedHistory.trackingToken);
+      } else if (selectedHistory.enquiryId) {
+        status = await this.loadRemoteEnquiryStatus(selectedHistory.enquiryId);
+      } else {
+        this.render();
+      }
+      if (status && !["ready", "failed"].includes(String(status.status || "").toLowerCase())) {
+        if (selectedHistory.trackingToken) this.startStatusPolling({ trackingToken: selectedHistory.trackingToken });
+        else if (selectedHistory.enquiryId) this.startStatusPolling({ enquiryId: selectedHistory.enquiryId });
+      }
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : "Past enquiry could not be refreshed.";
+      this.noticeTone = "neutral";
+      this.render();
+    }
+    this.emitComponentEvent("byda-process-change", { reason: "select-existing-enquiry" });
   }
 
   renderAddressStage() {
     const a = this.state.address;
     const selectedSite = this.state.selectedSite;
-    const emptyStateCopy = this.canGenerateCandidates() ? USER_COPY.notices.searchNone : USER_COPY.notices.searchEmpty;
-    const existingEmptyCopy = this.canGenerateCandidates() ? USER_COPY.existing.none : USER_COPY.existing.prompt;
-    const candidates = this.state.candidates.length ? `
-      <div class="candidate-list">
-        ${this.state.candidates.map((candidate) => `
-          <div class="candidate-card ${selectedSite?.id === candidate.id ? "active" : ""}">
-            <div>
-              <span class="field-label">${USER_COPY.search.resultLabel}</span>
-              <div class="candidate-title">${escapeHtml(candidate.title)}</div>
-              <div class="summary-help">${escapeHtml(candidate.copy)}</div>
+    const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
+    const enteredAddress = formatAddressLabel(this.state.address);
+    const searchResults = this.state.candidates.length
+      ? this.state.candidates
+      : this.state.existingEnquiries.length && enteredAddress
+        ? [{ id: "history-only-result", title: enteredAddress, source: "Address history", copy: "Past enquiries found for this address.", resolvedSite: null }]
+        : [];
+    const candidates = this.candidatesLoading ? `
+      <div class="empty-state wide">
+        <span class="field-label">Matches</span>
+        <span class="summary-help">Searching address data.</span>
+      </div>
+    ` : searchResults.length ? `
+      <div class="search-results">
+        ${searchResults.map((candidate, candidateIndex) => `
+          <div class="search-result ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? "active" : ""}">
+            <div class="search-result-head">
+              <div>
+                <span class="field-label">${USER_COPY.search.resultLabel}</span>
+                <strong class="search-result-title">${escapeHtml(candidate.title)}</strong>
+                <small class="search-result-source">${escapeHtml(candidate.source || candidate.copy || "Address result")}</small>
+              </div>
+              ${
+                candidate.resolvedSite
+                  ? `<button class="button ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? "primary" : ""}" type="button" data-action="select-candidate" data-candidate-id="${escapeHtml(candidate.id)}">${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? USER_COPY.buttons.chosen : USER_COPY.buttons.choose}</button>`
+                  : ""
+              }
             </div>
-            <div class="button-row">
-              <span class="candidate-badge">${escapeHtml(candidate.badge || "Candidate")}</span>
-              <button class="button ${selectedSite?.id === candidate.id ? "primary" : ""}" type="button" data-action="select-candidate" data-candidate-id="${escapeHtml(candidate.id)}">${selectedSite?.id === candidate.id ? USER_COPY.buttons.chosen : USER_COPY.buttons.choose}</button>
-            </div>
+            ${candidate.copy ? `<p class="search-result-copy">${escapeHtml(candidate.copy)}</p>` : ""}
+            ${
+              candidateIndex === 0
+                ? `
+                  <div class="search-result-history">
+                    <span class="field-label">${USER_COPY.existing.title}</span>
+                    ${
+                      this.existingEnquiriesLoading
+                        ? `
+                          <div class="search-history-item">
+                            <p class="search-result-copy">${escapeHtml(USER_COPY.existing.loading)}</p>
+                          </div>
+                        `
+                        : this.existingEnquiriesError
+                          ? `
+                            <div class="search-history-item">
+                              <p class="search-result-copy">${escapeHtml(this.existingEnquiriesError || USER_COPY.existing.loadError)}</p>
+                            </div>
+                          `
+                          : this.state.existingEnquiries.length
+                        ? `
+                          <div class="search-history-list">
+                            ${this.state.existingEnquiries.map((enquiry) => `
+                              <div class="search-history-item ${selectedExistingEnquiry?.id === enquiry.id ? "active" : ""}">
+                                <div class="search-result-head">
+                                  <strong class="tracking-status-value">${escapeHtml(formatExistingReference(enquiry))}</strong>
+                                  <span class="history-status" data-status="${escapeHtml(String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase())}">
+                                    ${escapeHtml(enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown")}
+                                  </span>
+                                </div>
+                                <div class="search-history-meta">
+                                  <span>${escapeHtml(formatExistingSource(enquiry.source))}</span>
+                                  <span>${escapeHtml(formatDateTimeLabel(enquiry.createdAt) || "Not available")}</span>
+                                  <span>${escapeHtml(enquiry.bydaStatus || "Not available")}</span>
+                                </div>
+                                <p class="search-result-copy">${escapeHtml(enquiry.message || "Existing result for the selected address.")}</p>
+                                <div class="search-history-actions">
+                                  <span class="search-result-copy">${escapeHtml(formatWorkDatesLabel(enquiry.digStartAt, enquiry.digEndAt))}</span>
+                                  <button class="button ${selectedExistingEnquiry?.id === enquiry.id ? "primary" : ""}" type="button" data-action="use-existing-enquiry" data-existing-enquiry-id="${escapeHtml(enquiry.id)}">${selectedExistingEnquiry?.id === enquiry.id ? USER_COPY.buttons.chosen : USER_COPY.buttons.use}</button>
+                                </div>
+                              </div>
+                            `).join("")}
+                          </div>
+                        `
+                        : `
+                          <div class="search-history-item">
+                            <p class="search-result-copy">${escapeHtml(this.canGenerateCandidates() ? USER_COPY.existing.none : USER_COPY.existing.prompt)}</p>
+                          </div>
+                        `
+                    }
+                  </div>
+                `
+                : ""
+            }
           </div>
         `).join("")}
       </div>
     ` : `
       <div class="empty-state wide">
         <span class="field-label">Matches</span>
-        <span class="summary-help">${emptyStateCopy}</span>
-      </div>
-    `;
-    const existingEnquiries = `
-      <div class="history-section">
-        <div>
-          <span class="field-label">${USER_COPY.existing.title}</span>
-          <div class="summary-help">${USER_COPY.existing.copy}</div>
-        </div>
-        ${
-          this.state.existingEnquiries.length
-            ? `
-              <div class="history-list">
-                ${this.state.existingEnquiries.map((enquiry) => `
-                  <div class="history-card">
-                    <div class="history-head">
-                      <div>
-                        <span class="field-label">${USER_COPY.existing.resultLabel}</span>
-                        <div class="history-title">${escapeHtml(enquiry.addressLabel || formatAddressLabel(this.state.address))}</div>
-                        <div class="summary-help">${escapeHtml(enquiry.message || "Existing result for the selected address.")}</div>
-                      </div>
-                      <span class="history-status" data-status="${escapeHtml(String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase())}">
-                        ${escapeHtml(enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown")}
-                      </span>
-                    </div>
-                    <div class="history-meta">
-                      <div class="history-meta-item">
-                        <span class="field-label">${USER_COPY.existing.reference}</span>
-                        <span class="summary-value">${escapeHtml(formatExistingReference(enquiry))}</span>
-                      </div>
-                      <div class="history-meta-item">
-                        <span class="field-label">${USER_COPY.existing.created}</span>
-                        <span class="summary-value">${escapeHtml(formatDateTimeLabel(enquiry.createdAt) || "Not available")}</span>
-                      </div>
-                      <div class="history-meta-item">
-                        <span class="field-label">${USER_COPY.existing.source}</span>
-                        <span class="summary-value">${escapeHtml(formatExistingSource(enquiry.source))}</span>
-                      </div>
-                      <div class="history-meta-item">
-                        <span class="field-label">${USER_COPY.existing.bydaStatus}</span>
-                        <span class="summary-value">${escapeHtml(enquiry.bydaStatus || "Not available")}</span>
-                      </div>
-                    </div>
-                  </div>
-                `).join("")}
-              </div>
-            `
-            : `
-              <div class="empty-state wide">
-                <span class="field-label">${USER_COPY.existing.title}</span>
-                <span class="summary-help">${existingEmptyCopy}</span>
-              </div>
-            `
-        }
+        <span class="summary-help">${escapeHtml(this.candidatesError || (this.canGenerateCandidates() ? USER_COPY.notices.searchNone : USER_COPY.notices.searchEmpty))}</span>
       </div>
     `;
     return `
@@ -599,6 +1108,10 @@ export class BydaProcessSteps extends HTMLElement {
           <input class="control" data-scope="address" name="streetNumber" value="${escapeHtml(a.streetNumber)}" placeholder="${USER_COPY.search.streetNumberPlaceholder}" autocomplete="address-line1" inputmode="numeric" />
         </label>
         <label class="field">
+          <span class="field-label">${USER_COPY.search.postcode}</span>
+          <input class="control" data-scope="address" name="postcode" value="${escapeHtml(a.postcode)}" placeholder="${USER_COPY.search.postcodePlaceholder}" autocomplete="postal-code" inputmode="numeric" />
+        </label>
+        <label class="field wide">
           <span class="field-label">${USER_COPY.search.streetName}</span>
           <input class="control" data-scope="address" name="streetName" value="${escapeHtml(a.streetName)}" placeholder="${USER_COPY.search.streetNamePlaceholder}" autocomplete="address-line1" />
         </label>
@@ -612,34 +1125,43 @@ export class BydaProcessSteps extends HTMLElement {
             ${STATE_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${a.state === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
           </select>
         </label>
-        <label class="field wide">
-          <span class="field-label">${USER_COPY.search.postcode}</span>
-          <input class="control" data-scope="address" name="postcode" value="${escapeHtml(a.postcode)}" placeholder="${USER_COPY.search.postcodePlaceholder}" autocomplete="postal-code" inputmode="numeric" />
-          <span class="summary-help">${USER_COPY.search.helper}</span>
-        </label>
       </div>
+      <p class="summary-help">${USER_COPY.search.helper}</p>
       ${candidates}
-      ${existingEnquiries}
-      ${selectedSite ? `<div class="selected-site"><strong>${USER_COPY.search.selectedLabel}:</strong> ${escapeHtml(selectedSite.title)}</div>` : ""}
+      ${selectedSite ? `<div class="selected-site"><strong>${USER_COPY.search.selectedLabel}:</strong> ${escapeHtml(getSiteDisplayLabel(selectedSite))}</div>` : ""}
     `;
   }
 
   renderEnquiryStage() {
     const e = this.state.enquiry;
-    this.ensureAutoUserReference();
+    this.ensureEnquiryDefaults();
+    const activityOptions = this.getActivityOptions();
+    const locationTypes = this.optionsData?.locationTypes?.length ? this.optionsData.locationTypes : LOCATION_TYPES;
+    const roadLocations = this.optionsData?.locationsInRoad?.length ? this.optionsData.locationsInRoad : ROAD_LOCATION_OPTIONS;
     return `
-      ${this.state.selectedSite ? `<div class="selected-site"><strong>${USER_COPY.details.locationLabel}:</strong> ${escapeHtml(this.state.selectedSite.title)}</div>` : ""}
+      ${this.state.selectedSite ? `<div class="selected-site"><strong>${USER_COPY.details.locationLabel}:</strong> ${escapeHtml(getSiteDisplayLabel(this.state.selectedSite))}</div>` : ""}
+      ${
+        this.optionsLoading
+          ? `<div class="empty-state wide"><span class="field-label">Options</span><span class="summary-help">${USER_COPY.notices.optionsLoading}</span></div>`
+          : this.optionsError
+            ? `<div class="empty-state wide"><span class="field-label">Options</span><span class="summary-help">${escapeHtml(this.optionsError)}</span></div>`
+            : ""
+      }
+      ${
+        this.authoritiesLoading
+          ? `<div class="empty-state wide"><span class="field-label">${USER_COPY.details.authority}</span><span class="summary-help">${USER_COPY.notices.authoritiesLoading}</span></div>`
+          : this.authoritiesError
+            ? `<div class="empty-state wide"><span class="field-label">${USER_COPY.details.authority}</span><span class="summary-help">${escapeHtml(this.authoritiesError)}</span></div>`
+            : ""
+      }
       <div class="form-grid">
         <label class="field"><span class="field-label">${USER_COPY.details.startDate}</span><input class="control" type="date" data-scope="enquiry" name="digStartAt" value="${escapeHtml(e.digStartAt)}" /></label>
         <label class="field"><span class="field-label">${USER_COPY.details.endDate}</span><input class="control" type="date" data-scope="enquiry" name="digEndAt" value="${escapeHtml(e.digEndAt)}" /></label>
-        <div class="field">
-          <span class="field-label">${USER_COPY.details.yourReference}</span>
-          <span class="summary-value">${escapeHtml(e.userReference)}</span>
-          <span class="summary-help">${USER_COPY.details.referenceHelp}</span>
-        </div>
-        <label class="field"><span class="field-label">${USER_COPY.details.authority}</span><input class="control" data-scope="enquiry" name="authority" value="${escapeHtml(e.authority)}" placeholder="Private / not selected" /></label>
-        <label class="field"><span class="field-label">${USER_COPY.details.activityType}</span><select class="control" data-scope="enquiry" name="activityType">${ACTIVITY_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${e.activityType === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>
-        <label class="field"><span class="field-label">${USER_COPY.details.locationType}</span><select class="control" data-scope="enquiry" name="locationType">${LOCATION_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${e.locationType === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>
+        <label class="field"><span class="field-label">${USER_COPY.details.activityType}</span><select class="control" data-scope="enquiry" name="activityType" ${boolAttr(this.optionsLoading || !activityOptions.length)}>${activityOptions.map((option) => `<option value="${escapeHtml(option.code)}" ${e.activityType === option.code ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>
+        <label class="field"><span class="field-label">${USER_COPY.details.locationType}</span><select class="control" data-scope="enquiry" name="locationType">${locationTypes.map((option) => `<option value="${escapeHtml(option)}" ${e.locationType === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>
+        ${e.locationType === "Road Reserve" ? `<label class="field"><span class="field-label">${USER_COPY.details.roadLocation}</span><select class="control" data-scope="enquiry" name="roadLocation">${roadLocations.map((option) => `<option value="${escapeHtml(option)}" ${e.roadLocation === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>` : ""}
+        <label class="field"><span class="field-label">${USER_COPY.details.authority}</span><select class="control" data-scope="enquiry" name="authorityId"><option value="">Private / not selected</option>${this.authorities.map((authority) => `<option value="${escapeHtml(String(authority.id))}" ${String(e.authorityId || "") === String(authority.id) ? "selected" : ""}>${escapeHtml(getAuthorityLabel(authority))}</option>`).join("")}</select></label>
+        <label class="field"><span class="field-label">${USER_COPY.details.manualAuthority}</span><input class="control" data-scope="enquiry" name="otherAuthorityName" value="${escapeHtml(e.otherAuthorityName)}" placeholder="${USER_COPY.details.manualAuthorityPlaceholder}" /></label>
         <label class="field wide"><span class="field-label">${USER_COPY.details.planning}</span><span class="toggle"><input type="checkbox" data-scope="enquiry" name="isPlanning" ${e.isPlanning ? "checked" : ""} /><span>${USER_COPY.details.planningHelp}</span></span></label>
         <label class="field wide"><span class="field-label">${USER_COPY.details.notes}</span><textarea class="textarea" data-scope="enquiry" name="notes" placeholder="${USER_COPY.details.notesPlaceholder}">${escapeHtml(e.notes)}</textarea></label>
       </div>
@@ -647,11 +1169,65 @@ export class BydaProcessSteps extends HTMLElement {
   }
 
   renderTrackingStage() {
-    this.ensureAutoUserReference();
-    const site = this.state.selectedSite?.title || formatAddressLabel(this.state.address) || "No site selected";
+    this.ensureEnquiryDefaults();
+    const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
+    const site = getSiteDisplayLabel(this.state.selectedSite) || formatAddressLabel(this.state.address) || "No site selected";
     const progress = this.getEnquiryProgress();
-    const nextStepCopy = this.state.submitted ? USER_COPY.review.nextAfterFinish : USER_COPY.review.nextBeforeFinish;
-    const nextStepHelp = this.state.submitted ? "Your reference number is ready to keep." : USER_COPY.review.finishHelp;
+    if (this.state.submitted) {
+      const statusLabel = selectedExistingEnquiry
+        ? getExistingEnquiryStatusLabel(selectedExistingEnquiry)
+        : (this.state.tracking.displayStatus || this.state.tracking.status || this.state.tracking.bydaStatus || "Submitted");
+      const statusKey = selectedExistingEnquiry
+        ? getExistingEnquiryStatusKey(selectedExistingEnquiry)
+        : String(this.state.tracking.status || this.state.tracking.displayStatus || this.state.tracking.bydaStatus || "submitted").toLowerCase();
+      const cardTone = getTrackingTone(statusLabel);
+      const cardReference = selectedExistingEnquiry ? formatExistingReference(selectedExistingEnquiry) : (this.state.tracking.token || "Not created yet");
+      const cardLocation = selectedExistingEnquiry?.addressLabel || site;
+      const cardWorkDates = selectedExistingEnquiry
+        ? formatWorkDatesLabel(selectedExistingEnquiry.digStartAt, selectedExistingEnquiry.digEndAt)
+        : formatWorkDatesLabel(this.state.enquiry.digStartAt, this.state.enquiry.digEndAt);
+      const cardUpdatedAt = selectedExistingEnquiry
+        ? (formatDateTimeLabel(selectedExistingEnquiry.updatedAt || selectedExistingEnquiry.createdAt) || "Not available")
+        : (formatDateTimeLabel(this.state.tracking.updatedAt || this.state.tracking.completedAt) || "Not available");
+      const cardDescription = selectedExistingEnquiry
+        ? "You selected a past enquiry from the search results. The BYDA status below reflects that saved enquiry."
+        : (this.state.tracking.message || "The enquiry has been submitted. The latest BYDA status is shown below.");
+      const statusValue = selectedExistingEnquiry
+        ? (selectedExistingEnquiry.bydaStatus || statusLabel)
+        : (this.state.tracking.bydaStatus || "Not available");
+      const readyUrl = selectedExistingEnquiry ? selectedExistingEnquiry.readyUrl : this.state.tracking.readyUrl;
+      const statusCopy = selectedExistingEnquiry
+        ? "Loaded from the saved enquiry you selected in the search results."
+        : (this.state.tracking.message || "The latest BYDA status for this enquiry.");
+      return `
+        <byda-status-card
+          eyebrow="${escapeHtml(selectedExistingEnquiry ? "Past enquiry selected" : "Enquiry submitted")}"
+          heading="${escapeHtml(selectedExistingEnquiry ? "Selected enquiry status" : "Live enquiry status")}"
+          status="${escapeHtml(statusLabel)}"
+          tone="${escapeHtml(cardTone)}"
+          reference="${escapeHtml(cardReference)}"
+          location="${escapeHtml(cardLocation)}"
+          work-dates="${escapeHtml(cardWorkDates)}"
+          updated-at="${escapeHtml(cardUpdatedAt)}"
+          description="${escapeHtml(cardDescription)}"
+        >
+          <div slot="media" class="status-media">REF</div>
+          <div class="tracking-status-list">
+            <div class="tracking-status-item">
+              <div class="tracking-status-head">
+                <span class="field-label">BYDA status</span>
+                <span class="history-status" data-status="${escapeHtml(statusKey)}">${escapeHtml(statusLabel)}</span>
+              </div>
+              <span class="tracking-status-value">${escapeHtml(statusValue)}</span>
+              <p class="tracking-status-copy">${escapeHtml(statusCopy)}</p>
+            </div>
+          </div>
+          ${readyUrl ? `<a slot="actions" href="${escapeHtml(readyUrl)}" target="_blank" rel="noreferrer">Open report</a>` : ""}
+        </byda-status-card>
+      `;
+    }
+    const nextStepCopy = USER_COPY.review.nextBeforeFinish;
+    const nextStepHelp = USER_COPY.review.finishHelp;
     return `
       <div class="summary-grid">
         <div class="summary-card wide">
@@ -671,7 +1247,7 @@ export class BydaProcessSteps extends HTMLElement {
       ${
         this.state.submitted
           ? ""
-          : `<div class="button-row"><button class="button success" type="button" data-action="complete" ${boolAttr(!this.isStepTwoComplete())}>${USER_COPY.buttons.finish}</button></div>`
+          : `<div class="button-row"><button class="button success" type="button" data-action="complete" ${boolAttr(this.submissionLoading || !this.isStepTwoComplete())}>${this.submissionLoading ? "Creating..." : USER_COPY.buttons.finish}</button></div>`
       }
     `;
   }
@@ -713,7 +1289,12 @@ export class BydaProcessSteps extends HTMLElement {
     if (scope === "address") {
       this.syncAddressResults();
     }
-    if (scope === "enquiry") this.setDraftTracking();
+    if (scope === "enquiry") {
+      if (field === "authorityId" && String(nextValue || "").trim()) this.state.enquiry.otherAuthorityName = "";
+      if (field === "otherAuthorityName" && String(nextValue || "").trim()) this.state.enquiry.authorityId = "";
+      if (field === "isPlanning" || field === "locationType") this.ensureEnquiryDefaults();
+      this.setDraftTracking();
+    }
     return true;
   }
 
@@ -736,15 +1317,22 @@ export class BydaProcessSteps extends HTMLElement {
       this.notice = ""; this.noticeTone = "neutral"; this.setStepIndex(this.stepIndex + 1, { emitEvent: true, reason: "next" }); return;
     }
     if (action === "reset") { this.reset(); return; }
-    if (action === "complete") { this.completeFlow(); return; }
+    if (action === "complete") { void this.completeFlow(); return; }
     if (action === "select-candidate") {
       const candidateId = actionTarget.getAttribute("data-candidate-id");
       const selectedCandidate = this.state.candidates.find((candidate) => candidate.id === candidateId);
-      if (!selectedCandidate) return;
-      this.state.selectedSite = { ...selectedCandidate }; this.setDraftTracking();
+      if (!selectedCandidate?.resolvedSite) return;
+      this.state.selectedSite = { ...selectedCandidate.resolvedSite }; this.setDraftTracking();
       this.state.enquiry.userReference = "";
       this.ensureAutoUserReference();
-      this.notice = USER_COPY.notices.locationSelected; this.noticeTone = "positive"; this.render(); this.emitComponentEvent("byda-process-change", { reason: "select-site" });
+      this.notice = USER_COPY.notices.locationSelected; this.noticeTone = "positive"; this.render(); void this.loadAuthorities(this.state.selectedSite); this.emitComponentEvent("byda-process-change", { reason: "select-site" });
+      return;
+    }
+    if (action === "use-existing-enquiry") {
+      const enquiryId = actionTarget.getAttribute("data-existing-enquiry-id");
+      const selectedExistingEnquiry = this.state.existingEnquiries.find((enquiry) => enquiry.id === enquiryId);
+      if (!selectedExistingEnquiry) return;
+      void this.useExistingEnquiry(selectedExistingEnquiry);
     }
   }
 

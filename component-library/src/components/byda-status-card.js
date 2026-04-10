@@ -331,6 +331,7 @@ export class BydaStatusCard extends HTMLElement {
     "status",
     "tone",
     "updated-at",
+    "work-dates",
   ];
 
   constructor() {
@@ -400,6 +401,10 @@ export class BydaStatusCard extends HTMLElement {
       {
         label: "Location",
         value: getTrimmedAttribute(this, "location"),
+      },
+      {
+        label: "Work dates",
+        value: getTrimmedAttribute(this, "work-dates"),
       },
       {
         label: "Updated",

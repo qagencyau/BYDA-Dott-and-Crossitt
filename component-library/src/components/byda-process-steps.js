@@ -1,8 +1,8 @@
-const DEFAULT_STEPS = ["Find Location", "Enquiry Details", "Review & Track"];
+const DEFAULT_STEPS = ["Find Location", "Enquiry Details", "Track Enquiry"];
 const DEFAULT_DETAILS = [
   "Enter the address details and choose the best match.",
   "Add your dates and any extra details you want included.",
-  "Check your details and keep your reference number for later.",
+  "Keep your reference number handy and open the report when it is ready.",
 ];
 const LOCATION_TYPES = ["Private", "Road Reserve"];
 const ROAD_LOCATION_OPTIONS = ["Road", "Nature Strip", "Footpath"];
@@ -19,7 +19,7 @@ const DEFAULT_VALUE = {
     digStartAt: "",
     digEndAt: "",
     userReference: "",
-    isPlanning: false,
+    isPlanning: true,
     activityType: "",
     locationType: LOCATION_TYPES[0],
     roadLocation: ROAD_LOCATION_OPTIONS[0],
@@ -110,8 +110,8 @@ const USER_COPY = {
     notesPlaceholder: "Add extra details if needed.",
   },
   review: {
-    title: "Review & track",
-    copy: "Check your details and keep your reference number for later.",
+    title: "Track enquiry",
+    copy: "Keep your reference number and open the report when it is ready.",
     progress: "Progress",
     location: "Location",
     workDates: "Work dates",
@@ -146,8 +146,8 @@ const USER_COPY = {
     ready: {
       label: "Ready",
       percent: 80,
-      detail: "Your details are ready to review.",
-      status: "Ready to finish",
+      detail: "Your details are ready to submit.",
+      status: "Ready to create",
     },
     complete: {
       label: "Complete",
@@ -560,6 +560,7 @@ export class BydaProcessSteps extends HTMLElement {
     this.state.enquiry.userReference = generateUserReference(this.state.selectedSite?.id || getAddressSeed(this.state.address));
   }
   ensureEnquiryDefaults() {
+    this.state.enquiry.isPlanning = true;
     applyDefaultEnquiryDates(this.state.enquiry);
     const activityOptions = this.getActivityOptions();
     const locationTypes = this.optionsData?.locationTypes?.length ? this.optionsData.locationTypes : LOCATION_TYPES;
@@ -572,9 +573,7 @@ export class BydaProcessSteps extends HTMLElement {
     if (this.state.selectedSite && !this.state.selectedExistingEnquiry) this.ensureAutoUserReference();
   }
   getActivityOptions() {
-    const nextOptions = this.state.enquiry.isPlanning
-      ? this.optionsData?.planningActivityTypes
-      : this.optionsData?.excavationActivityTypes;
+    const nextOptions = this.optionsData?.planningActivityTypes;
     return Array.isArray(nextOptions) ? nextOptions : [];
   }
   getEnquiryProgress() {
@@ -886,7 +885,7 @@ export class BydaProcessSteps extends HTMLElement {
       userReference: String(this.state.enquiry.userReference || "").trim() || undefined,
       digStartAt: this.state.enquiry.digStartAt,
       digEndAt: this.state.enquiry.digEndAt,
-      isPlanningJob: Boolean(this.state.enquiry.isPlanning),
+      isPlanningJob: true,
       activityTypes: [this.state.enquiry.activityType].filter(Boolean),
       locationTypes: [this.state.enquiry.locationType].filter(Boolean),
       locationsInRoad:
@@ -934,7 +933,7 @@ export class BydaProcessSteps extends HTMLElement {
       this.state.tracking.message = result.message || "Enquiry lodged with BYDA. Waiting for status updates.";
       this.state.tracking.completedAt = new Date().toISOString();
       this.state.tracking.updatedAt = this.state.tracking.completedAt;
-      this.render();
+      this.setStepIndex(2, { emitEvent: true, reason: "complete" });
       const status = result.token ? await this.loadTrackingStatus(result.token) : null;
       const latestStatus = status || {
         status: result.status || "processing",
@@ -1162,7 +1161,6 @@ export class BydaProcessSteps extends HTMLElement {
         ${e.locationType === "Road Reserve" ? `<label class="field"><span class="field-label">${USER_COPY.details.roadLocation}</span><select class="control" data-scope="enquiry" name="roadLocation">${roadLocations.map((option) => `<option value="${escapeHtml(option)}" ${e.roadLocation === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></label>` : ""}
         <label class="field"><span class="field-label">${USER_COPY.details.authority}</span><select class="control" data-scope="enquiry" name="authorityId"><option value="">Private / not selected</option>${this.authorities.map((authority) => `<option value="${escapeHtml(String(authority.id))}" ${String(e.authorityId || "") === String(authority.id) ? "selected" : ""}>${escapeHtml(getAuthorityLabel(authority))}</option>`).join("")}</select></label>
         <label class="field"><span class="field-label">${USER_COPY.details.manualAuthority}</span><input class="control" data-scope="enquiry" name="otherAuthorityName" value="${escapeHtml(e.otherAuthorityName)}" placeholder="${USER_COPY.details.manualAuthorityPlaceholder}" /></label>
-        <label class="field wide"><span class="field-label">${USER_COPY.details.planning}</span><span class="toggle"><input type="checkbox" data-scope="enquiry" name="isPlanning" ${e.isPlanning ? "checked" : ""} /><span>${USER_COPY.details.planningHelp}</span></span></label>
         <label class="field wide"><span class="field-label">${USER_COPY.details.notes}</span><textarea class="textarea" data-scope="enquiry" name="notes" placeholder="${USER_COPY.details.notesPlaceholder}">${escapeHtml(e.notes)}</textarea></label>
       </div>
     `;
@@ -1172,83 +1170,64 @@ export class BydaProcessSteps extends HTMLElement {
     this.ensureEnquiryDefaults();
     const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
     const site = getSiteDisplayLabel(this.state.selectedSite) || formatAddressLabel(this.state.address) || "No site selected";
-    const progress = this.getEnquiryProgress();
-    if (this.state.submitted) {
-      const statusLabel = selectedExistingEnquiry
-        ? getExistingEnquiryStatusLabel(selectedExistingEnquiry)
-        : (this.state.tracking.displayStatus || this.state.tracking.status || this.state.tracking.bydaStatus || "Submitted");
-      const statusKey = selectedExistingEnquiry
-        ? getExistingEnquiryStatusKey(selectedExistingEnquiry)
-        : String(this.state.tracking.status || this.state.tracking.displayStatus || this.state.tracking.bydaStatus || "submitted").toLowerCase();
-      const cardTone = getTrackingTone(statusLabel);
-      const cardReference = selectedExistingEnquiry ? formatExistingReference(selectedExistingEnquiry) : (this.state.tracking.token || "Not created yet");
-      const cardLocation = selectedExistingEnquiry?.addressLabel || site;
-      const cardWorkDates = selectedExistingEnquiry
-        ? formatWorkDatesLabel(selectedExistingEnquiry.digStartAt, selectedExistingEnquiry.digEndAt)
-        : formatWorkDatesLabel(this.state.enquiry.digStartAt, this.state.enquiry.digEndAt);
-      const cardUpdatedAt = selectedExistingEnquiry
-        ? (formatDateTimeLabel(selectedExistingEnquiry.updatedAt || selectedExistingEnquiry.createdAt) || "Not available")
-        : (formatDateTimeLabel(this.state.tracking.updatedAt || this.state.tracking.completedAt) || "Not available");
-      const cardDescription = selectedExistingEnquiry
-        ? "You selected a past enquiry from the search results. The BYDA status below reflects that saved enquiry."
-        : (this.state.tracking.message || "The enquiry has been submitted. The latest BYDA status is shown below.");
-      const statusValue = selectedExistingEnquiry
-        ? (selectedExistingEnquiry.bydaStatus || statusLabel)
-        : (this.state.tracking.bydaStatus || "Not available");
-      const readyUrl = selectedExistingEnquiry ? selectedExistingEnquiry.readyUrl : this.state.tracking.readyUrl;
-      const statusCopy = selectedExistingEnquiry
-        ? "Loaded from the saved enquiry you selected in the search results."
-        : (this.state.tracking.message || "The latest BYDA status for this enquiry.");
+    if (!this.state.submitted) {
       return `
-        <byda-status-card
-          eyebrow="${escapeHtml(selectedExistingEnquiry ? "Past enquiry selected" : "Enquiry submitted")}"
-          heading="${escapeHtml(selectedExistingEnquiry ? "Selected enquiry status" : "Live enquiry status")}"
-          status="${escapeHtml(statusLabel)}"
-          tone="${escapeHtml(cardTone)}"
-          reference="${escapeHtml(cardReference)}"
-          location="${escapeHtml(cardLocation)}"
-          work-dates="${escapeHtml(cardWorkDates)}"
-          updated-at="${escapeHtml(cardUpdatedAt)}"
-          description="${escapeHtml(cardDescription)}"
-        >
-          <div slot="media" class="status-media">REF</div>
-          <div class="tracking-status-list">
-            <div class="tracking-status-item">
-              <div class="tracking-status-head">
-                <span class="field-label">BYDA status</span>
-                <span class="history-status" data-status="${escapeHtml(statusKey)}">${escapeHtml(statusLabel)}</span>
-              </div>
-              <span class="tracking-status-value">${escapeHtml(statusValue)}</span>
-              <p class="tracking-status-copy">${escapeHtml(statusCopy)}</p>
-            </div>
-          </div>
-          ${readyUrl ? `<a slot="actions" href="${escapeHtml(readyUrl)}" target="_blank" rel="noreferrer">Open report</a>` : ""}
-        </byda-status-card>
+        <div class="empty-state wide">
+          <span class="field-label">${USER_COPY.review.referenceNumber}</span>
+          <span class="summary-help">Your reference number is created when you finish the enquiry details step.</span>
+        </div>
       `;
     }
-    const nextStepCopy = USER_COPY.review.nextBeforeFinish;
-    const nextStepHelp = USER_COPY.review.finishHelp;
+    const statusLabel = selectedExistingEnquiry
+      ? getExistingEnquiryStatusLabel(selectedExistingEnquiry)
+      : (this.state.tracking.displayStatus || this.state.tracking.status || this.state.tracking.bydaStatus || "Submitted");
+    const statusKey = selectedExistingEnquiry
+      ? getExistingEnquiryStatusKey(selectedExistingEnquiry)
+      : String(this.state.tracking.status || this.state.tracking.displayStatus || this.state.tracking.bydaStatus || "submitted").toLowerCase();
+    const cardTone = getTrackingTone(statusLabel);
+    const cardReference = selectedExistingEnquiry ? formatExistingReference(selectedExistingEnquiry) : (this.state.tracking.token || "Not created yet");
+    const cardLocation = selectedExistingEnquiry?.addressLabel || site;
+    const cardWorkDates = selectedExistingEnquiry
+      ? formatWorkDatesLabel(selectedExistingEnquiry.digStartAt, selectedExistingEnquiry.digEndAt)
+      : formatWorkDatesLabel(this.state.enquiry.digStartAt, this.state.enquiry.digEndAt);
+    const cardUpdatedAt = selectedExistingEnquiry
+      ? (formatDateTimeLabel(selectedExistingEnquiry.updatedAt || selectedExistingEnquiry.createdAt) || "Not available")
+      : (formatDateTimeLabel(this.state.tracking.updatedAt || this.state.tracking.completedAt) || "Not available");
+    const cardDescription = selectedExistingEnquiry
+      ? "You selected a past enquiry from the search results. The BYDA status below reflects that saved enquiry."
+      : (this.state.tracking.message || "The enquiry has been submitted. The latest BYDA status is shown below.");
+    const statusValue = selectedExistingEnquiry
+      ? (selectedExistingEnquiry.bydaStatus || statusLabel)
+      : (this.state.tracking.bydaStatus || "Not available");
+    const readyUrl = selectedExistingEnquiry ? selectedExistingEnquiry.readyUrl : this.state.tracking.readyUrl;
+    const statusCopy = selectedExistingEnquiry
+      ? "Loaded from the saved enquiry you selected in the search results."
+      : (this.state.tracking.message || "The latest BYDA status for this enquiry.");
     return `
-      <div class="summary-grid">
-        <div class="summary-card wide">
-          <span class="summary-label">${USER_COPY.review.progress}</span>
-          <span class="summary-value">${escapeHtml(`${progress.percent}% - ${progress.label}`)}</span>
-          <div class="progress-track" aria-hidden="true"><div class="progress-fill" style="width:${progress.percent}%"></div></div>
-          <span class="summary-help">${escapeHtml(progress.detail)}</span>
+      <byda-status-card
+        eyebrow="${escapeHtml(selectedExistingEnquiry ? "Past enquiry selected" : "Enquiry submitted")}"
+        heading="${escapeHtml(selectedExistingEnquiry ? "Selected enquiry status" : "Live enquiry status")}"
+        status="${escapeHtml(statusLabel)}"
+        tone="${escapeHtml(cardTone)}"
+        reference="${escapeHtml(cardReference)}"
+        location="${escapeHtml(cardLocation)}"
+        work-dates="${escapeHtml(cardWorkDates)}"
+        updated-at="${escapeHtml(cardUpdatedAt)}"
+        description="${escapeHtml(cardDescription)}"
+      >
+        <div slot="media" class="status-media">REF</div>
+        <div class="tracking-status-list">
+          <div class="tracking-status-item">
+            <div class="tracking-status-head">
+              <span class="field-label">BYDA status</span>
+              <span class="history-status" data-status="${escapeHtml(statusKey)}">${escapeHtml(statusLabel)}</span>
+            </div>
+            <span class="tracking-status-value">${escapeHtml(statusValue)}</span>
+            <p class="tracking-status-copy">${escapeHtml(statusCopy)}</p>
+          </div>
         </div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.location}</span><span class="summary-value">${escapeHtml(site)}</span><span class="summary-help">Chosen in the first step.</span></div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.workDates}</span><span class="summary-value">${escapeHtml(`${formatDateLabel(this.state.enquiry.digStartAt)} -> ${formatDateLabel(this.state.enquiry.digEndAt)}`)}</span><span class="summary-help">Added in your enquiry details.</span></div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.yourReference}</span><span class="summary-value">${escapeHtml(this.state.enquiry.userReference || "Not supplied")}</span><span class="summary-help">${USER_COPY.details.referenceHelp}</span></div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.status}</span><span class="summary-value">${escapeHtml(progress.status)}</span><span class="summary-help">Shows where your enquiry is up to.</span></div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.referenceNumber}</span><span class="summary-value">${escapeHtml(this.state.tracking.token || "Not created yet")}</span><span class="summary-help">Keep this number for later.</span></div>
-        <div class="summary-card"><span class="summary-label">${USER_COPY.review.created}</span><span class="summary-value">${escapeHtml(this.state.tracking.completedAt ? formatDateTimeLabel(this.state.tracking.completedAt) : "Not created yet")}</span><span class="summary-help">This appears once your reference number is ready.</span></div>
-        <div class="summary-card wide"><span class="summary-label">${USER_COPY.review.nextStep}</span><span class="summary-value">${escapeHtml(nextStepCopy)}</span><span class="summary-help">${nextStepHelp}</span></div>
-      </div>
-      ${
-        this.state.submitted
-          ? ""
-          : `<div class="button-row"><button class="button success" type="button" data-action="complete" ${boolAttr(this.submissionLoading || !this.isStepTwoComplete())}>${this.submissionLoading ? "Creating..." : USER_COPY.buttons.finish}</button></div>`
-      }
+        ${readyUrl ? `<a slot="actions" href="${escapeHtml(readyUrl)}" target="_blank" rel="noreferrer">Open report</a>` : ""}
+      </byda-status-card>
     `;
   }
 
@@ -1292,7 +1271,7 @@ export class BydaProcessSteps extends HTMLElement {
     if (scope === "enquiry") {
       if (field === "authorityId" && String(nextValue || "").trim()) this.state.enquiry.otherAuthorityName = "";
       if (field === "otherAuthorityName" && String(nextValue || "").trim()) this.state.enquiry.authorityId = "";
-      if (field === "isPlanning" || field === "locationType") this.ensureEnquiryDefaults();
+      if (field === "locationType") this.ensureEnquiryDefaults();
       this.setDraftTracking();
     }
     return true;
@@ -1314,7 +1293,16 @@ export class BydaProcessSteps extends HTMLElement {
     if (action === "previous") { this.notice = ""; this.noticeTone = "neutral"; this.setStepIndex(this.stepIndex - 1, { emitEvent: true, reason: "previous" }); return; }
     if (action === "next") {
       if (!this.canAdvance()) { this.notice = this.stepIndex === 0 ? "Choose a location to continue." : USER_COPY.notices.datesNeeded; this.noticeTone = "neutral"; this.render(); return; }
-      this.notice = ""; this.noticeTone = "neutral"; this.setStepIndex(this.stepIndex + 1, { emitEvent: true, reason: "next" }); return;
+      this.notice = ""; this.noticeTone = "neutral";
+      if (this.stepIndex === 1) {
+        if (this.state.submitted) {
+          this.setStepIndex(2, { emitEvent: true, reason: "next" });
+        } else {
+          void this.completeFlow();
+        }
+        return;
+      }
+      this.setStepIndex(this.stepIndex + 1, { emitEvent: true, reason: "next" }); return;
     }
     if (action === "reset") { this.reset(); return; }
     if (action === "complete") { void this.completeFlow(); return; }
@@ -1339,7 +1327,7 @@ export class BydaProcessSteps extends HTMLElement {
   syncFooterState() {
     const items = buildStageItems(this);
     this.elements.previous.disabled = this.stepIndex <= 0;
-    this.elements.next.disabled = this.stepIndex >= items.length - 1 || !this.canAdvance();
+    this.elements.next.disabled = this.stepIndex >= items.length - 1 || !this.canAdvance() || (this.stepIndex === 1 && this.submissionLoading);
     this.elements.next.hidden = this.stepIndex >= items.length - 1;
   }
 
@@ -1360,7 +1348,10 @@ export class BydaProcessSteps extends HTMLElement {
     this.elements.stageTitle.textContent = active.title;
     this.elements.stageDetail.textContent = active.detail;
     this.elements.previous.textContent = getTrimmedAttribute(this, "previous-label") || USER_COPY.buttons.back;
-    this.elements.next.textContent = getTrimmedAttribute(this, "next-label") || USER_COPY.buttons.continue;
+    this.elements.next.textContent = getTrimmedAttribute(this, "next-label")
+      || (this.stepIndex === 1 && !this.state.submitted
+        ? (this.submissionLoading ? "Creating..." : USER_COPY.buttons.finish)
+        : USER_COPY.buttons.continue);
     this.shadowRoot.querySelector(".reset").textContent = USER_COPY.buttons.restart;
     this.elements.body.innerHTML = this.renderBody();
     this.elements.notice.hidden = !this.notice;

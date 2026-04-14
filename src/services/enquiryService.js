@@ -316,6 +316,87 @@ export class EnquiryService {
     };
   }
 
+  async getEnquiryReportUrl({ token, enquiryId } = {}) {
+    const localRecord = token
+      ? await this.store.get(token)
+      : Number.isFinite(enquiryId)
+        ? await this.store.findByBydaEnquiryId(enquiryId)
+        : null;
+
+    if (token && !localRecord) {
+      return null;
+    }
+
+    if (localRecord?.mode === "mock") {
+      return `/mock-reports/${localRecord.token}`;
+    }
+
+    if (!this.bydaClient.isLive()) {
+      return localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+    }
+
+    const resolvedEnquiryId = enquiryId ?? localRecord?.bydaEnquiryId ?? null;
+
+    if (!resolvedEnquiryId) {
+      return localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+    }
+
+    const shareUrl =
+      (await safelyResolve(() => this.bydaClient.getShareLink(resolvedEnquiryId)))
+      ?? localRecord?.shareUrl
+      ?? null;
+    const prefersPdf =
+      !localRecord?.combinedFileId ||
+      String(localRecord?.fileUrl ?? "").includes("/EnquiryCombinedZip/") ||
+      String(localRecord?.fileUrl ?? "").includes("response-content-type=application%2Fzip");
+    let combinedFileId = prefersPdf ? null : localRecord?.combinedFileId ?? null;
+    let combinedJobId = prefersPdf ? null : localRecord?.combinedJobId ?? null;
+    let fileUrl = prefersPdf ? null : await safelyResolve(() => this.bydaClient.probeFileUrl(combinedFileId));
+
+    if (!fileUrl) {
+      const pdfRequest = await safelyResolve(() => this.bydaClient.requestCombinedPdf(resolvedEnquiryId));
+      const pdfFileId = pdfRequest?.File?.id ?? null;
+      const pdfJobId = pdfRequest?.Job?.id ?? null;
+      const pdfUrl = pdfFileId
+        ? await safelyResolve(() => this.bydaClient.probeFileUrl(pdfFileId))
+        : null;
+
+      if (pdfUrl) {
+        combinedFileId = pdfFileId;
+        combinedJobId = pdfJobId;
+        fileUrl = pdfUrl;
+      }
+    }
+
+    if (!fileUrl && !combinedFileId && localRecord?.combinedFileId) {
+      combinedFileId = localRecord.combinedFileId;
+      combinedJobId = localRecord?.combinedJobId ?? null;
+      fileUrl = await safelyResolve(() => this.bydaClient.probeFileUrl(localRecord.combinedFileId));
+    }
+
+    if (localRecord?.token) {
+      const nextUpdatedAt = new Date().toISOString();
+
+      await this.store.update(localRecord.token, (current) => ({
+        ...current,
+        status: fileUrl ? "ready" : current.status,
+        message: fileUrl
+          ? "Combined BYDA report is ready."
+          : shareUrl
+            ? current.message || "BYDA share link available while the combined report is checked."
+            : current.message,
+        shareUrl: shareUrl ?? current.shareUrl,
+        fileUrl: fileUrl ?? current.fileUrl,
+        combinedFileId: combinedFileId ?? current.combinedFileId,
+        combinedJobId: combinedJobId ?? current.combinedJobId,
+        updatedAt: nextUpdatedAt,
+        lastPolledAt: nextUpdatedAt,
+      }));
+    }
+
+    return fileUrl ?? shareUrl ?? localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+  }
+
   async runLiveDiagnostics({ resolvedSite } = {}) {
     return this.bydaClient.runDiagnostics({
       polygon: resolvedSite?.polygon,

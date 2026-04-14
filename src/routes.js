@@ -104,6 +104,41 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function buildReadyUrl(record) {
+  if (!record) {
+    return null;
+  }
+
+  const hasReportLink = Boolean(record.readyUrl ?? record.fileUrl ?? record.shareUrl);
+
+  if (!hasReportLink) {
+    return null;
+  }
+
+  const trackingToken = record.trackingToken ?? record.token ?? null;
+
+  if (trackingToken) {
+    return `/api/enquiries/${encodeURIComponent(String(trackingToken))}/report`;
+  }
+
+  if (record.enquiryId) {
+    return `/api/enquiries/byda/${encodeURIComponent(String(record.enquiryId))}/report`;
+  }
+
+  return null;
+}
+
+function toHistoryPayload(record) {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    ...record,
+    readyUrl: buildReadyUrl(record),
+  };
+}
+
 function toStatusPayload(record) {
   if (!record) {
     return null;
@@ -121,7 +156,13 @@ function toStatusPayload(record) {
     enquiryId: record.bydaEnquiryId,
     externalId: record.bydaExternalId,
     bydaStatus: record.bydaStatus,
-    readyUrl: record.fileUrl ?? record.shareUrl ?? null,
+    readyUrl: buildReadyUrl({
+      token: record.token,
+      trackingToken: record.token,
+      enquiryId: record.bydaEnquiryId,
+      fileUrl: record.fileUrl ?? null,
+      shareUrl: record.shareUrl ?? null,
+    }),
     fileUrl: record.fileUrl ?? null,
     shareUrl: record.shareUrl ?? null,
     error: record.error ?? null,
@@ -171,6 +212,7 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
 
     response.json({
       ...history,
+      enquiries: history.enquiries.map((record) => toHistoryPayload(record)),
       requestId: response.locals.requestId,
     });
   }));
@@ -192,6 +234,7 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
 
     response.json({
       ...history,
+      enquiries: history.enquiries.map((record) => toHistoryPayload(record)),
       requestId: response.locals.requestId,
     });
   }));
@@ -252,7 +295,22 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
   router.get("/api/enquiries/byda/:enquiryId", asyncHandler(async (request, response) => {
     const params = bydaEnquiryParamSchema.parse(request.params);
     const status = await enquiryService.getRemoteEnquiryStatus(params.enquiryId);
-    response.json(status);
+    response.json(toHistoryPayload(status));
+  }));
+
+  router.get("/api/enquiries/byda/:enquiryId/report", asyncHandler(async (request, response) => {
+    const params = bydaEnquiryParamSchema.parse(request.params);
+    const reportUrl = await enquiryService.getEnquiryReportUrl({ enquiryId: params.enquiryId });
+
+    if (!reportUrl) {
+      response.status(404).json({
+        error: "Report is not available for this enquiry yet.",
+        requestId: response.locals.requestId,
+      });
+      return;
+    }
+
+    response.redirect(reportUrl);
   }));
 
   router.get("/api/enquiries/:token", asyncHandler(async (request, response) => {
@@ -264,6 +322,21 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
     }
 
     response.json(toStatusPayload(record));
+  }));
+
+  router.get("/api/enquiries/:token/report", asyncHandler(async (request, response) => {
+    const token = String(request.params.token);
+    const reportUrl = await enquiryService.getEnquiryReportUrl({ token });
+
+    if (!reportUrl) {
+      response.status(404).json({
+        error: "Report is not available for this enquiry yet.",
+        requestId: response.locals.requestId,
+      });
+      return;
+    }
+
+    response.redirect(reportUrl);
   }));
 
   router.get("/mock-reports/:token", asyncHandler(async (request, response) => {

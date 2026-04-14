@@ -151,7 +151,10 @@ export class EnquiryService {
     const [localRecords, remoteResult] = await Promise.all([
       wantsLocal ? this.store.list() : Promise.resolve([]),
       wantsByda
-        ? this.bydaClient.searchEnquiries({ limit, createdAfter })
+        ? this.bydaClient.searchEnquiries({ limit, createdAfter }).catch(() => ({
+            info: { limit, count: 0 },
+            enquiries: [],
+          }))
         : Promise.resolve({
             info: { limit, count: 0 },
             enquiries: [],
@@ -183,7 +186,10 @@ export class EnquiryService {
     const [localRecords, remoteResult] = await Promise.all([
       wantsLocal ? this.store.list() : Promise.resolve([]),
       wantsByda
-        ? this.bydaClient.searchEnquiries({ limit: remoteSearchLimit, createdAfter })
+        ? this.bydaClient.searchEnquiries({ limit: remoteSearchLimit, createdAfter }).catch(() => ({
+            info: { limit: remoteSearchLimit, count: 0 },
+            enquiries: [],
+          }))
         : Promise.resolve({
             info: { limit: remoteSearchLimit, count: 0 },
             enquiries: [],
@@ -272,7 +278,8 @@ export class EnquiryService {
     let fileUrl = localRecord?.fileUrl ?? null;
 
     if (!combinedFileId) {
-      const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedZip(enquiryId));
+      //const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedZip(enquiryId));
+      const downloadRequest = await safelyResolve(() => this.bydaClient.requestCombinedPdf(enquiryId));
       combinedFileId = downloadRequest?.File?.id ?? null;
       combinedJobId = downloadRequest?.Job?.id ?? null;
     }

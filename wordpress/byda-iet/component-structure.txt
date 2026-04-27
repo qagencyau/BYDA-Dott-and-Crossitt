@@ -1,0 +1,33 @@
+[byda_iet
+  instance="iet-main"
+  heading="Interactive Enquiry Tool"]
+
+[byda_iet
+  instance="iet-gf"
+  heading="Interactive Enquiry Tool"
+  auto_search="true"
+  street_number_selector="#input_163_435_1"
+  street_name_selector="#input_163_435_2"
+  suburb_selector="#input_163_435_3"
+  state_selector="#input_163_435_4"
+  postcode_selector="#input_163_435_5"]
+
+[byda_iet
+  instance="iet-combined-address"
+  heading="Interactive Enquiry Tool"
+  address_source_selector="#input_163_435"
+  auto_search="true"]
+
+[byda_iet
+  instance="iet-status-only"
+  heading="Interactive Enquiry Tool"
+  reference_number_selector="#input_163_440"]
+
+[byda_iet
+  instance="iet-status-static"
+  heading="Interactive Enquiry Tool"
+  reference_number="1dba5744-7ebd-4d5d-b6f0-a598db516ac3"]
+
+  Use shortcode selectors when a single form instance needs different prefill sources than the plugin defaults.
+  The Gravity Forms HTML field can contain either {{byda_iet}} or [byda_iet] and the plugin will render it at runtime without overwriting the saved field content.
+  If a tracking reference is provided, the component skips straight to Stage 3 and loads the status card for that reference.

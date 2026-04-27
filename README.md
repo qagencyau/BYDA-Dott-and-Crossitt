@@ -40,3 +40,4 @@ The diagnostic checks:
 - The official BYDA article says the direct API `source` must be `API`, so the implementation submits that value for live lodgements.
 - Polling currently aims to produce a combined ZIP download URL. If that is not yet available, the app keeps the enquiry in a processing state and surfaces the BYDA share link when possible.
 - QLD, NSW, and VIC attempt to upgrade the site geometry from public cadastral parcel data. If a parcel lookup is unavailable, the app falls back to a small buffered polygon around the resolved point.
+- The WordPress package can use the top-level `poller` service as the BYDA credential proxy. In that mode WordPress only needs the poller base URL and shared secret; BYDA API credentials live on the poller runtime. The poller handles live options, organisation lookup, enquiry creation, status/report lookup, and BYDA history search.

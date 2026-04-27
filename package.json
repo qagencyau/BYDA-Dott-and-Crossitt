@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "build:components": "node scripts/build-components.js",
+    "build:wordpress-iet": "node scripts/build-wordpress-iet.js",
     "watch:components": "node scripts/build-components.js --watch",
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "start:byda-iet-poller": "node poller/service.js",
+    "publish:poller-docker": "node scripts/publish-poller-docker.js"
   },
   "engines": {
     "node": ">=20"

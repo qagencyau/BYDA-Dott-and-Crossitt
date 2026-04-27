@@ -3,3 +3,6 @@ dist/
 .env
 data/
 npm-debug.log*
+poller-example/
+wordpress-example/
+*.zip

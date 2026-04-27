@@ -194,6 +194,14 @@ template.innerHTML = `
     .form-grid,.summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
     .wide{grid-column:1/-1}
     .control,.textarea{width:100%;min-height:48px;padding:12px 14px;border-radius:14px;border:1px solid rgba(24,38,31,.1);background:#fff;color:var(--ink);font:inherit;font-size:.96rem}
+    .readonly-address{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .readonly-address-intro{grid-column:1/-1;margin:0;color:var(--muted);line-height:1.6}
+    .readonly-field{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:14px 16px;border-radius:18px;border:1px solid rgba(24,38,31,.08);background:rgba(255,255,255,.8)}
+    .readonly-field.missing{background:rgba(194,82,74,.08);border-color:rgba(194,82,74,.16)}
+    .readonly-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:rgba(45,141,98,.14);color:var(--successInk);font-weight:800;line-height:1}
+    .readonly-field.missing .readonly-icon{background:rgba(194,82,74,.14);color:#7f241d}
+    .readonly-value{display:block;margin-top:4px;font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+    .readonly-field.missing .readonly-value{color:#7f241d}
     .textarea{min-height:110px;resize:vertical}
     .toggle{display:flex;align-items:center;gap:10px;font-weight:600}
     .toggle input{width:18px;height:18px;accent-color:var(--accent)}
@@ -234,7 +242,7 @@ template.innerHTML = `
     .progress-fill{height:100%;border-radius:999px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));transition:width .22s ease}
     .payload{margin:0;padding:16px;border-radius:18px;background:#17211c;color:#f4efe6;font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;font-size:.82rem;line-height:1.65;overflow:auto;white-space:pre-wrap;word-break:break-word}
     code{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace}
-    @media (max-width:900px){.form-grid,.summary-grid,.history-meta{grid-template-columns:1fr}}
+    @media (max-width:900px){.form-grid,.summary-grid,.history-meta,.readonly-address{grid-template-columns:1fr}.readonly-address-intro{grid-column:auto}}
     @media (max-width:720px){.frame{padding:22px}.topline,.footer-actions,.search-result-head,.tracking-status-head{flex-direction:column;align-items:stretch}.stage-head{grid-template-columns:1fr}.button{width:100%}.candidate-card{grid-template-columns:1fr}}
   </style>
   <article class="panel">
@@ -292,10 +300,15 @@ function applyDefaultEnquiryDates(enquiry = {}) {
   return enquiry;
 }
 function getExistingEnquiryStatusLabel(enquiry = {}) {
-  return enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown";
+  const displayStatus = String(enquiry.displayStatus || "").trim();
+  const status = String(enquiry.status || "").trim();
+  const bydaStatus = String(enquiry.bydaStatus || "").trim();
+  const generic = ["processing", "polling", "started", "starting"];
+  if (bydaStatus && generic.includes((displayStatus || status).toLowerCase())) return bydaStatus;
+  return displayStatus || status || bydaStatus || "Unknown";
 }
 function getExistingEnquiryStatusKey(enquiry = {}) {
-  return String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase();
+  return getExistingEnquiryStatusLabel(enquiry).toLowerCase();
 }
 function getAddressHistoryEndpoint(host) {
   return getTrimmedAttribute(host, "address-history-endpoint") || "/api/enquiries/by-address";
@@ -324,9 +337,72 @@ function getPollIntervalMs(host) {
   const value = Number.parseInt(getTrimmedAttribute(host, "poll-interval-ms"), 10);
   return Number.isFinite(value) && value >= 1000 ? value : 5000;
 }
+function shouldAutoSearchPrefill(host) {
+  const value = getTrimmedAttribute(host, "prefill-auto-search").toLowerCase();
+  return value !== "false";
+}
+function componentDebugLog(host, message, meta = {}) {
+  if (typeof console === "undefined" || typeof console.debug !== "function") return;
+  console.debug(`[BYDA IET Component] ${message}`, {
+    id: host?.id || "",
+    currentStep: host?.currentStep || null,
+    ...meta,
+  });
+}
+function urlDebugSummary(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return { present: false };
+  try {
+    const url = new URL(raw, window.location.href);
+    return {
+      present: true,
+      host: url.host,
+      pathname: url.pathname,
+      hasQuery: Boolean(url.search),
+      length: raw.length,
+    };
+  } catch {
+    return { present: true, invalid: true, length: raw.length };
+  }
+}
 async function fetchJsonForComponent(url, init) {
+  const startedAt = performance.now();
+  if (typeof console !== "undefined" && typeof console.debug === "function") {
+    console.debug("[BYDA IET Component] Fetch starting.", {
+      url,
+      method: init?.method || "GET",
+      hasBody: Boolean(init?.body),
+      bodyLength: init?.body ? String(init.body).length : 0,
+    });
+  }
   const response = await fetch(url, init);
   const payload = await response.json().catch(() => ({}));
+  if (typeof console !== "undefined" && typeof console.debug === "function") {
+    console.debug("[BYDA IET Component] Fetch completed.", {
+      url,
+      method: init?.method || "GET",
+      ok: response.ok,
+      status: response.status,
+      durationMs: Math.round(performance.now() - startedAt),
+      payloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : null,
+      statusPayload: payload && typeof payload === "object" ? {
+        token: payload.token || payload.trackingToken || null,
+        enquiryId: payload.enquiryId ?? null,
+        status: payload.status || null,
+        displayStatus: payload.displayStatus || null,
+        bydaStatus: payload.bydaStatus || null,
+        pollerStatus: payload.pollerStatus || null,
+        hasReadyUrl: Boolean(payload.readyUrl),
+        hasFileUrl: Boolean(payload.fileUrl),
+        hasShareUrl: Boolean(payload.shareUrl),
+        readyUrl: urlDebugSummary(payload.readyUrl),
+        fileUrl: urlDebugSummary(payload.fileUrl),
+        shareUrl: urlDebugSummary(payload.shareUrl),
+        message: payload.message || null,
+        error: payload.error || null,
+      } : null,
+    });
+  }
   if (!response.ok) {
     const details = typeof payload.details === "string"
       ? payload.details
@@ -450,7 +526,7 @@ function formatExistingReference(enquiry) {
 
 export class BydaProcessSteps extends HTMLElement {
   static tagName = "byda-process-steps";
-  static observedAttributes = ["current-step", "debug", "details", "heading", "next-label", "previous-label", "steps"];
+  static observedAttributes = ["current-step", "debug", "details", "heading", "next-label", "previous-label", "readonly-address", "steps"];
 
   constructor() {
     super();
@@ -468,6 +544,7 @@ export class BydaProcessSteps extends HTMLElement {
     this.addressResultsRequestId = 0;
     this.addressResultsAbortController = null;
     this.addressResultsDebounce = null;
+    this.addressResultsKey = "";
     this.optionsData = null;
     this.optionsLoading = false;
     this.optionsError = "";
@@ -501,7 +578,11 @@ export class BydaProcessSteps extends HTMLElement {
     this.syncStepFromAttributes();
     void this.loadOptions();
     if (this.state.selectedSite && !this.state.selectedExistingEnquiry) void this.loadAuthorities(this.state.selectedSite);
-    if (this.canGenerateCandidates() && (!this.state.candidates.length || !this.state.existingEnquiries.length)) this.scheduleAddressResultsRefresh({ immediate: true });
+    if (
+      shouldAutoSearchPrefill(this)
+      && this.canGenerateCandidates()
+      && (!this.state.candidates.length || !this.state.existingEnquiries.length)
+    ) this.scheduleAddressResultsRefresh({ immediate: true });
     if (this.state.submitted) void this.resumeTrackingState();
     this.render();
   }
@@ -532,6 +613,7 @@ export class BydaProcessSteps extends HTMLElement {
     this.stopStatusPolling();
     this.cancelStatusRequest();
     this.state = createInitialValue(nextValue);
+    this.addressResultsKey = (this.state.candidates.length || this.state.existingEnquiries.length) ? this.getAddressResultsKey() : "";
     this.notice = "";
     this.noticeTone = "neutral";
     this.candidatesError = "";
@@ -542,15 +624,33 @@ export class BydaProcessSteps extends HTMLElement {
     this.authoritiesError = "";
     this.authoritiesLoading = false;
     this.submissionLoading = false;
-    if (this.isConnected && this.canGenerateCandidates() && (!this.state.candidates.length || !this.state.existingEnquiries.length)) this.scheduleAddressResultsRefresh({ immediate: true });
+    if (
+      this.isConnected
+      && shouldAutoSearchPrefill(this)
+      && this.canGenerateCandidates()
+      && (!this.state.candidates.length || !this.state.existingEnquiries.length)
+    ) this.scheduleAddressResultsRefresh({ immediate: true });
     if (this.isConnected && this.state.selectedSite && !this.state.selectedExistingEnquiry) void this.loadAuthorities(this.state.selectedSite);
     if (this.isConnected && this.state.submitted) void this.resumeTrackingState();
     if (this.isConnected) this.render();
   }
 
-  reset() { this.cancelAddressResultsRefresh(); this.stopStatusPolling(); this.cancelStatusRequest(); this.state = createInitialValue(); this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.candidatesError = ""; this.candidatesLoading = false; this.existingEnquiriesError = ""; this.existingEnquiriesLoading = false; this.authorities = []; this.authoritiesError = ""; this.authoritiesLoading = false; this.submissionLoading = false; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
+  reset() { this.cancelAddressResultsRefresh(); this.stopStatusPolling(); this.cancelStatusRequest(); this.state = createInitialValue(); this.addressResultsKey = ""; this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.candidatesError = ""; this.candidatesLoading = false; this.existingEnquiriesError = ""; this.existingEnquiriesLoading = false; this.authorities = []; this.authoritiesError = ""; this.authoritiesLoading = false; this.submissionLoading = false; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
   goToStep(nextStep) { this.setStepIndex(parseInteger(nextStep, 1) - 1, { emitEvent: true, reason: "programmatic" }); }
   canGenerateCandidates() { return hasAddressSearchInput(this.state.address); }
+  getAddressResultsKey() { return JSON.stringify({ streetNumber: String(this.state.address.streetNumber || "").trim().toUpperCase(), streetName: String(this.state.address.streetName || "").trim().toUpperCase(), suburb: String(this.state.address.suburb || "").trim().toUpperCase(), state: String(this.state.address.state || "").trim().toUpperCase(), postcode: String(this.state.address.postcode || "").replace(/\D/g, "").slice(0, 4) }); }
+  refreshAddressResults({ immediate = false, force = false } = {}) {
+    if (!this.canGenerateCandidates()) {
+      this.scheduleAddressResultsRefresh({ immediate });
+      return false;
+    }
+    if (!force && (this.candidatesLoading || this.existingEnquiriesLoading || this.addressResultsDebounce || this.addressResultsKey === this.getAddressResultsKey())) {
+      return false;
+    }
+    this.scheduleAddressResultsRefresh({ immediate });
+    return true;
+  }
+  isAddressReadonly() { return this.hasAttribute("readonly-address"); }
   isStepOneComplete() { return Boolean(this.state.selectedSite); }
   isStepTwoComplete() { const e = this.state.enquiry; return Boolean(this.isStepOneComplete() && e.digStartAt && e.digEndAt && e.activityType && e.locationType && (e.locationType !== "Road Reserve" || e.roadLocation)); }
   isStepThreeComplete() { return Boolean(this.state.submitted); }
@@ -663,6 +763,7 @@ export class BydaProcessSteps extends HTMLElement {
       this.existingEnquiriesError = "";
       this.state.candidates = [];
       this.state.existingEnquiries = [];
+      this.addressResultsKey = "";
       return;
     }
     const runRefresh = () => {
@@ -678,6 +779,7 @@ export class BydaProcessSteps extends HTMLElement {
   async loadAddressResults() {
     if (!this.canGenerateCandidates()) return;
     const requestId = ++this.addressResultsRequestId;
+    const addressResultsKey = this.getAddressResultsKey();
     this.addressResultsAbortController = new AbortController();
     this.candidatesLoading = true;
     this.candidatesError = "";
@@ -707,6 +809,7 @@ export class BydaProcessSteps extends HTMLElement {
       if (requestId !== this.addressResultsRequestId) return;
       this.candidatesLoading = false;
       this.existingEnquiriesLoading = false;
+      this.addressResultsKey = addressResultsKey;
       if (candidatesResult.status === "fulfilled") {
         this.state.candidates = Array.isArray(candidatesResult.value.sites)
           ? candidatesResult.value.sites.map((site) => normalizeCandidate(site))
@@ -750,14 +853,30 @@ export class BydaProcessSteps extends HTMLElement {
     if (!this.statusPollHandle) return;
     clearInterval(this.statusPollHandle);
     this.statusPollHandle = null;
+    componentDebugLog(this, "Status polling stopped.", {
+      tracking: { ...this.state.tracking },
+    });
   }
   startStatusPolling(target) {
     this.stopStatusPolling();
+    componentDebugLog(this, "Status polling started.", {
+      target,
+      intervalMs: getPollIntervalMs(this),
+      trackingBeforeStart: { ...this.state.tracking },
+    });
     this.statusPollHandle = setInterval(() => {
+      componentDebugLog(this, "Status poll tick.", {
+        target,
+        trackingBeforeRequest: { ...this.state.tracking },
+      });
       const work = target.trackingToken
         ? this.loadTrackingStatus(target.trackingToken)
         : this.loadRemoteEnquiryStatus(target.enquiryId);
       work.catch((error) => {
+        componentDebugLog(this, "Status poll tick failed.", {
+          target,
+          error: error instanceof Error ? error.message : String(error),
+        });
         this.notice = error instanceof Error ? error.message : "Status polling failed.";
         this.noticeTone = "neutral";
         this.render();
@@ -766,6 +885,23 @@ export class BydaProcessSteps extends HTMLElement {
     }, getPollIntervalMs(this));
   }
   applyStatusPayload(status) {
+    componentDebugLog(this, "Applying status payload.", {
+      previousTracking: { ...this.state.tracking },
+      status: {
+        token: status?.trackingToken || status?.token || null,
+        enquiryId: status?.enquiryId ?? null,
+        status: status?.status || null,
+        displayStatus: status?.displayStatus || null,
+        bydaStatus: status?.bydaStatus || null,
+        pollerStatus: status?.pollerStatus || null,
+        readyUrl: urlDebugSummary(status?.readyUrl),
+        fileUrl: urlDebugSummary(status?.fileUrl),
+        shareUrl: urlDebugSummary(status?.shareUrl),
+        message: status?.message || null,
+        error: status?.error || null,
+        updatedAt: status?.updatedAt || null,
+      },
+    });
     const displayStatus = status.displayStatus || status.status || status.bydaStatus || "unknown";
     this.state.submitted = true;
     this.state.tracking.status = status.status || displayStatus;
@@ -797,11 +933,19 @@ export class BydaProcessSteps extends HTMLElement {
     const terminal = ["ready", "failed"].includes(String(status.status || "").toLowerCase());
     if (terminal) this.stopStatusPolling();
     this.render();
+    componentDebugLog(this, "Status payload applied.", {
+      terminal,
+      nextTracking: { ...this.state.tracking },
+    });
     return status;
   }
   async loadTrackingStatus(token) {
     this.cancelStatusRequest();
     this.statusRequestAbortController = new AbortController();
+    componentDebugLog(this, "Loading local tracking status.", {
+      token,
+      endpoint: getEnquiryStatusEndpoint(this, token),
+    });
     try {
       const status = await fetchJsonForComponent(getEnquiryStatusEndpoint(this, token), {
         signal: this.statusRequestAbortController.signal,
@@ -809,11 +953,16 @@ export class BydaProcessSteps extends HTMLElement {
       return this.applyStatusPayload(status);
     } finally {
       this.statusRequestAbortController = null;
+      componentDebugLog(this, "Local tracking status request finished.", { token });
     }
   }
   async loadRemoteEnquiryStatus(enquiryId) {
     this.cancelStatusRequest();
     this.statusRequestAbortController = new AbortController();
+    componentDebugLog(this, "Loading remote BYDA enquiry status.", {
+      enquiryId,
+      endpoint: getRemoteEnquiryStatusEndpoint(this, enquiryId),
+    });
     try {
       const status = await fetchJsonForComponent(getRemoteEnquiryStatusEndpoint(this, enquiryId), {
         signal: this.statusRequestAbortController.signal,
@@ -821,9 +970,13 @@ export class BydaProcessSteps extends HTMLElement {
       return this.applyStatusPayload(status);
     } finally {
       this.statusRequestAbortController = null;
+      componentDebugLog(this, "Remote BYDA enquiry status request finished.", { enquiryId });
     }
   }
   async resumeTrackingState() {
+    componentDebugLog(this, "Resuming tracking state.", {
+      tracking: { ...this.state.tracking },
+    });
     try {
       let status = null;
       if (this.state.tracking.token) {
@@ -832,16 +985,27 @@ export class BydaProcessSteps extends HTMLElement {
         status = await this.loadRemoteEnquiryStatus(this.state.tracking.enquiryId);
       } else {
         this.render();
+        componentDebugLog(this, "No tracking token or enquiry ID available during resume.", {
+          tracking: { ...this.state.tracking },
+        });
         return;
       }
       const nextToken = status?.trackingToken || this.state.tracking.token;
       const nextEnquiryId = status?.enquiryId ?? this.state.tracking.enquiryId;
+      componentDebugLog(this, "Tracking resume loaded status.", {
+        status,
+        nextToken,
+        nextEnquiryId,
+      });
       if (status && !["ready", "failed"].includes(String(status.status || "").toLowerCase())) {
         if (nextToken) this.startStatusPolling({ trackingToken: nextToken });
         else if (nextEnquiryId) this.startStatusPolling({ enquiryId: nextEnquiryId });
       }
     } catch (error) {
       if (error?.name === "AbortError") return;
+      componentDebugLog(this, "Tracking resume failed.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.notice = error instanceof Error ? error.message : "Tracking status could not be loaded.";
       this.noticeTone = "neutral";
       this.render();
@@ -850,6 +1014,7 @@ export class BydaProcessSteps extends HTMLElement {
   syncAddressResults() {
     this.stopStatusPolling();
     this.cancelStatusRequest();
+    this.addressResultsKey = "";
     this.state.candidates = [];
     this.state.existingEnquiries = [];
     this.state.selectedSite = null;
@@ -908,6 +1073,11 @@ export class BydaProcessSteps extends HTMLElement {
   async completeFlow() {
     if (!this.isStepTwoComplete()) { this.notice = USER_COPY.notices.datesNeeded; this.noticeTone = "neutral"; this.setStepIndex(1, { emitEvent: true, reason: "incomplete-enquiry" }); return; }
     if (this.submissionLoading) return;
+    const enquiryPayload = this.buildEnquiryPayload();
+    componentDebugLog(this, "Completing enquiry flow.", {
+      payload: enquiryPayload,
+      trackingBeforeSubmit: { ...this.state.tracking },
+    });
     this.stopStatusPolling();
     this.cancelStatusRequest();
     this.state.selectedExistingEnquiry = null;
@@ -922,22 +1092,30 @@ export class BydaProcessSteps extends HTMLElement {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(this.buildEnquiryPayload()),
+        body: JSON.stringify(enquiryPayload),
+      });
+      componentDebugLog(this, "Create enquiry response received.", {
+        result,
       });
       this.state.submitted = true;
       this.state.tracking.token = result.token || "";
       this.state.tracking.enquiryId = result.enquiryId ?? null;
       this.state.tracking.status = result.status || "processing";
-      this.state.tracking.displayStatus = result.status || "processing";
-      this.state.tracking.bydaStatus = this.state.tracking.bydaStatus === "NOT_STARTED" ? "CREATED" : this.state.tracking.bydaStatus;
+      this.state.tracking.displayStatus = result.displayStatus || result.status || "processing";
+      this.state.tracking.bydaStatus = result.bydaStatus || (this.state.tracking.bydaStatus === "NOT_STARTED" ? "CREATING" : this.state.tracking.bydaStatus);
       this.state.tracking.message = result.message || "Enquiry lodged with BYDA. Waiting for status updates.";
       this.state.tracking.completedAt = new Date().toISOString();
       this.state.tracking.updatedAt = this.state.tracking.completedAt;
       this.setStepIndex(2, { emitEvent: true, reason: "complete" });
       const status = result.token ? await this.loadTrackingStatus(result.token) : null;
+      componentDebugLog(this, "Immediate post-create status loaded.", {
+        status,
+        result,
+      });
       const latestStatus = status || {
         status: result.status || "processing",
-        displayStatus: result.status || "processing",
+        displayStatus: result.displayStatus || result.status || "processing",
+        bydaStatus: result.bydaStatus || this.state.tracking.bydaStatus,
         token: result.token || "",
       };
       if (!["ready", "failed"].includes(String(latestStatus.status || "").toLowerCase()) && result.token) {
@@ -950,10 +1128,17 @@ export class BydaProcessSteps extends HTMLElement {
       this.emitComponentEvent("byda-process-change", { reason: "complete" });
       this.emitComponentEvent("byda-process-complete", { reason: "complete" });
     } catch (error) {
+      componentDebugLog(this, "Completing enquiry flow failed.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.notice = error instanceof Error ? error.message : "Enquiry could not be created.";
       this.noticeTone = "neutral";
     } finally {
       this.submissionLoading = false;
+      componentDebugLog(this, "Completing enquiry flow finished.", {
+        tracking: { ...this.state.tracking },
+        notice: this.notice,
+      });
       this.render();
     }
   }
@@ -1010,6 +1195,7 @@ export class BydaProcessSteps extends HTMLElement {
     const a = this.state.address;
     const selectedSite = this.state.selectedSite;
     const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
+    const readonlyAddress = this.isAddressReadonly();
     const enteredAddress = formatAddressLabel(this.state.address);
     const searchResults = this.state.candidates.length
       ? this.state.candidates
@@ -1063,8 +1249,8 @@ export class BydaProcessSteps extends HTMLElement {
                               <div class="search-history-item ${selectedExistingEnquiry?.id === enquiry.id ? "active" : ""}">
                                 <div class="search-result-head">
                                   <strong class="tracking-status-value">${escapeHtml(formatExistingReference(enquiry))}</strong>
-                                  <span class="history-status" data-status="${escapeHtml(String(enquiry.status || enquiry.displayStatus || enquiry.bydaStatus || "unknown").toLowerCase())}">
-                                    ${escapeHtml(enquiry.displayStatus || enquiry.status || enquiry.bydaStatus || "Unknown")}
+                                  <span class="history-status" data-status="${escapeHtml(getExistingEnquiryStatusKey(enquiry))}">
+                                    ${escapeHtml(getExistingEnquiryStatusLabel(enquiry))}
                                   </span>
                                 </div>
                                 <div class="search-history-meta">
@@ -1100,31 +1286,60 @@ export class BydaProcessSteps extends HTMLElement {
         <span class="summary-help">${escapeHtml(this.candidatesError || (this.canGenerateCandidates() ? USER_COPY.notices.searchNone : USER_COPY.notices.searchEmpty))}</span>
       </div>
     `;
+    const addressFields = [
+      { label: USER_COPY.search.streetNumber, value: a.streetNumber },
+      { label: USER_COPY.search.streetName, value: a.streetName },
+      { label: USER_COPY.search.suburb, value: a.suburb },
+      { label: USER_COPY.search.state, value: a.state },
+      { label: USER_COPY.search.postcode, value: a.postcode },
+    ];
+    const addressSummary = readonlyAddress
+      ? `
+        <div class="readonly-address">
+          <p class="readonly-address-intro">Address input has been added from the form. Missing values are marked below before matching can continue.</p>
+          ${addressFields.map((field) => {
+            const value = String(field.value || "").trim();
+            const ok = Boolean(value);
+            return `
+              <div class="readonly-field ${ok ? "" : "missing"}">
+                <span class="readonly-icon" aria-hidden="true">${ok ? "✓" : "×"}</span>
+                <span>
+                  <span class="field-label">${escapeHtml(field.label)}</span>
+                  <span class="readonly-value">${escapeHtml(ok ? value : "Missing")}</span>
+                </span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `
+      : `
+        <div class="form-grid">
+          <label class="field">
+            <span class="field-label">${USER_COPY.search.streetNumber}</span>
+            <input class="control" data-scope="address" name="streetNumber" value="${escapeHtml(a.streetNumber)}" placeholder="${USER_COPY.search.streetNumberPlaceholder}" autocomplete="address-line1" inputmode="numeric" />
+          </label>
+          <label class="field">
+            <span class="field-label">${USER_COPY.search.postcode}</span>
+            <input class="control" data-scope="address" name="postcode" value="${escapeHtml(a.postcode)}" placeholder="${USER_COPY.search.postcodePlaceholder}" autocomplete="postal-code" inputmode="numeric" />
+          </label>
+          <label class="field wide">
+            <span class="field-label">${USER_COPY.search.streetName}</span>
+            <input class="control" data-scope="address" name="streetName" value="${escapeHtml(a.streetName)}" placeholder="${USER_COPY.search.streetNamePlaceholder}" autocomplete="address-line1" />
+          </label>
+          <label class="field">
+            <span class="field-label">${USER_COPY.search.suburb}</span>
+            <input class="control" data-scope="address" name="suburb" value="${escapeHtml(a.suburb)}" placeholder="${USER_COPY.search.suburbPlaceholder}" autocomplete="address-level2" />
+          </label>
+          <label class="field">
+            <span class="field-label">${USER_COPY.search.state}</span>
+            <select class="control" data-scope="address" name="state">
+              ${STATE_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${a.state === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+      `;
     return `
-      <div class="form-grid">
-        <label class="field">
-          <span class="field-label">${USER_COPY.search.streetNumber}</span>
-          <input class="control" data-scope="address" name="streetNumber" value="${escapeHtml(a.streetNumber)}" placeholder="${USER_COPY.search.streetNumberPlaceholder}" autocomplete="address-line1" inputmode="numeric" />
-        </label>
-        <label class="field">
-          <span class="field-label">${USER_COPY.search.postcode}</span>
-          <input class="control" data-scope="address" name="postcode" value="${escapeHtml(a.postcode)}" placeholder="${USER_COPY.search.postcodePlaceholder}" autocomplete="postal-code" inputmode="numeric" />
-        </label>
-        <label class="field wide">
-          <span class="field-label">${USER_COPY.search.streetName}</span>
-          <input class="control" data-scope="address" name="streetName" value="${escapeHtml(a.streetName)}" placeholder="${USER_COPY.search.streetNamePlaceholder}" autocomplete="address-line1" />
-        </label>
-        <label class="field">
-          <span class="field-label">${USER_COPY.search.suburb}</span>
-          <input class="control" data-scope="address" name="suburb" value="${escapeHtml(a.suburb)}" placeholder="${USER_COPY.search.suburbPlaceholder}" autocomplete="address-level2" />
-        </label>
-        <label class="field">
-          <span class="field-label">${USER_COPY.search.state}</span>
-          <select class="control" data-scope="address" name="state">
-            ${STATE_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${a.state === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-          </select>
-        </label>
-      </div>
+      ${addressSummary}
       <p class="summary-help">${USER_COPY.search.helper}</p>
       ${candidates}
       ${selectedSite ? `<div class="selected-site"><strong>${USER_COPY.search.selectedLabel}:</strong> ${escapeHtml(getSiteDisplayLabel(selectedSite))}</div>` : ""}
@@ -1201,7 +1416,7 @@ export class BydaProcessSteps extends HTMLElement {
       : (this.state.tracking.bydaStatus || "Not available");
     const readyUrl = selectedExistingEnquiry ? selectedExistingEnquiry.readyUrl : this.state.tracking.readyUrl;
     const statusCopy = selectedExistingEnquiry
-      ? "Loaded from the saved enquiry you selected in the search results."
+      ? (selectedExistingEnquiry.message || "Loaded from the saved enquiry you selected in the search results.")
       : (this.state.tracking.message || "The latest BYDA status for this enquiry.");
     return `
       <byda-status-card
@@ -1352,7 +1567,9 @@ export class BydaProcessSteps extends HTMLElement {
       || (this.stepIndex === 1 && !this.state.submitted
         ? (this.submissionLoading ? "Creating..." : USER_COPY.buttons.finish)
         : USER_COPY.buttons.continue);
-    this.shadowRoot.querySelector(".reset").textContent = USER_COPY.buttons.restart;
+    const resetButton = this.shadowRoot.querySelector(".reset");
+    resetButton.textContent = USER_COPY.buttons.restart;
+    resetButton.hidden = this.isAddressReadonly();
     this.elements.body.innerHTML = this.renderBody();
     this.elements.notice.hidden = !this.notice;
     this.elements.notice.textContent = this.notice;

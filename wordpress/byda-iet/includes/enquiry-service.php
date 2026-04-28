@@ -398,13 +398,17 @@ function byda_iet_is_all_received_status($status) {
 	return 'ALL_RECEIVED' === strtoupper(trim((string) $status));
 }
 
-function byda_iet_can_request_combined_report($byda_status, $combined_file_id = null, $combined_job_id = null) {
-	return byda_iet_is_all_received_status($byda_status) || !empty($combined_file_id) || !empty($combined_job_id);
+function byda_iet_can_request_combined_report($byda_status, $combined_file_id = null, $combined_job_id = null, $allow_partial = false) {
+	return byda_iet_is_all_received_status($byda_status) || !empty($combined_file_id) || !empty($combined_job_id) || $allow_partial;
 }
 
 function byda_iet_build_live_report_message($file_url, $share_url, $byda_status = null) {
-	if ($file_url) {
+	if ($file_url && byda_iet_is_all_received_status($byda_status)) {
 		return 'Combined BYDA report is ready.';
+	}
+
+	if ($file_url) {
+		return 'Partial BYDA report is available while responses are still arriving.';
 	}
 
 	if (byda_iet_is_all_received_status($byda_status)) {
@@ -747,7 +751,9 @@ function byda_iet_get_remote_enquiry_status_via_poller($enquiry_id, $settings = 
 	$file_url = !empty($status['fileUrl']) ? $status['fileUrl'] : null;
 	$share_url = !empty($status['shareUrl']) ? $status['shareUrl'] : null;
 	$byda_status = !empty($status['bydaStatus']) ? $status['bydaStatus'] : null;
-	$tracking_status = !empty($local_record['status']) ? $local_record['status'] : ($file_url ? 'ready' : 'processing');
+	$report_finalized = !empty($status['reportFinalized']);
+	$local_status = !empty($local_record['status']) ? strtolower((string) $local_record['status']) : '';
+	$tracking_status = 'failed' === $local_status ? 'failed' : ($report_finalized && $file_url ? 'ready' : 'processing');
 	$display_status = byda_iet_resolve_display_status($tracking_status, $byda_status);
 
 	$result = array(
@@ -767,6 +773,8 @@ function byda_iet_get_remote_enquiry_status_via_poller($enquiry_id, $settings = 
 		'sourceFileUrl' => !empty($status['sourceFileUrl']) ? $status['sourceFileUrl'] : null,
 		'storageKey' => !empty($status['storageKey']) ? $status['storageKey'] : null,
 		'fileUrlExpiresAt' => !empty($status['fileUrlExpiresAt']) ? $status['fileUrlExpiresAt'] : null,
+		'reportFinalized' => $report_finalized,
+		'reportFinalizedAt' => !empty($status['reportFinalizedAt']) ? $status['reportFinalizedAt'] : null,
 		'shareUrl' => $share_url,
 		'error' => !empty($local_record['error']) ? $local_record['error'] : null,
 		'site' => !empty($local_record['site']) ? $local_record['site'] : null,
@@ -780,15 +788,19 @@ function byda_iet_get_remote_enquiry_status_via_poller($enquiry_id, $settings = 
 	if ($local_record && !empty($local_record['token'])) {
 		$updated = byda_iet_update_enquiry_record(
 			$local_record['token'],
-			static function ($current) use ($status, $file_url, $share_url, $byda_status) {
+			static function ($current) use ($status, $file_url, $share_url, $byda_status, $report_finalized) {
 				$now = byda_iet_now_iso8601();
-				$current['status'] = $file_url ? 'ready' : (isset($current['status']) ? $current['status'] : 'processing');
+				$current['status'] = $report_finalized && $file_url ? 'ready' : ('failed' === (isset($current['status']) ? $current['status'] : '') ? 'failed' : 'processing');
 				$current['message'] = byda_iet_build_live_report_message($file_url, $share_url, $byda_status);
 				$current['shareUrl'] = $share_url ? $share_url : (isset($current['shareUrl']) ? $current['shareUrl'] : null);
 				$current['fileUrl'] = $file_url ? $file_url : (isset($current['fileUrl']) ? $current['fileUrl'] : null);
 				$current['sourceFileUrl'] = !empty($status['sourceFileUrl']) ? $status['sourceFileUrl'] : (isset($current['sourceFileUrl']) ? $current['sourceFileUrl'] : null);
 				$current['storageKey'] = !empty($status['storageKey']) ? $status['storageKey'] : (isset($current['storageKey']) ? $current['storageKey'] : null);
 				$current['fileUrlExpiresAt'] = !empty($status['fileUrlExpiresAt']) ? $status['fileUrlExpiresAt'] : (isset($current['fileUrlExpiresAt']) ? $current['fileUrlExpiresAt'] : null);
+				if ($report_finalized) {
+					$current['reportFinalized'] = true;
+					$current['reportFinalizedAt'] = !empty($status['reportFinalizedAt']) ? $status['reportFinalizedAt'] : $now;
+				}
 				$current['combinedFileId'] = !empty($status['combinedFileId']) ? $status['combinedFileId'] : (isset($current['combinedFileId']) ? $current['combinedFileId'] : null);
 				$current['combinedJobId'] = !empty($status['combinedJobId']) ? $status['combinedJobId'] : (isset($current['combinedJobId']) ? $current['combinedJobId'] : null);
 				$current['bydaStatus'] = $byda_status ? $byda_status : (isset($current['bydaStatus']) ? $current['bydaStatus'] : null);
@@ -870,7 +882,7 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 		function_exists('byda_iet_external_poller_proxy_is_enabled') &&
 		byda_iet_external_poller_proxy_is_enabled($settings)
 	) {
-		$report = byda_iet_external_poller_get_enquiry_report($resolved_enquiry_id, $settings);
+		$report = byda_iet_external_poller_get_enquiry_report($resolved_enquiry_id, $settings, is_array($local_record) ? $local_record : array());
 		if (!is_wp_error($report)) {
 			byda_iet_log(
 				'Report URL resolution received poller report response.',
@@ -888,20 +900,25 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 			);
 			$file_url = !empty($report['fileUrl']) ? $report['fileUrl'] : null;
 			$share_url = !empty($report['shareUrl']) ? $report['shareUrl'] : null;
+			$report_finalized = !empty($report['reportFinalized']);
 			$report_url = !empty($report['reportUrl']) ? $report['reportUrl'] : ($file_url ? $file_url : $share_url);
 
 			if ($local_record && !empty($local_record['token'])) {
 				$updated = byda_iet_update_enquiry_record(
 					$local_record['token'],
-					static function ($current) use ($report, $file_url, $share_url) {
+					static function ($current) use ($report, $file_url, $share_url, $report_finalized) {
 						$now = byda_iet_now_iso8601();
-						$current['status'] = $file_url ? 'ready' : (isset($current['status']) ? $current['status'] : 'processing');
+						$current['status'] = $report_finalized && $file_url ? 'ready' : ('failed' === (isset($current['status']) ? $current['status'] : '') ? 'failed' : 'processing');
 						$current['message'] = byda_iet_build_live_report_message($file_url, $share_url, !empty($report['bydaStatus']) ? $report['bydaStatus'] : null);
 						$current['shareUrl'] = $share_url ? $share_url : (isset($current['shareUrl']) ? $current['shareUrl'] : null);
 						$current['fileUrl'] = $file_url ? $file_url : (isset($current['fileUrl']) ? $current['fileUrl'] : null);
 						$current['sourceFileUrl'] = !empty($report['sourceFileUrl']) ? $report['sourceFileUrl'] : (isset($current['sourceFileUrl']) ? $current['sourceFileUrl'] : null);
 						$current['storageKey'] = !empty($report['storageKey']) ? $report['storageKey'] : (isset($current['storageKey']) ? $current['storageKey'] : null);
 						$current['fileUrlExpiresAt'] = !empty($report['fileUrlExpiresAt']) ? $report['fileUrlExpiresAt'] : (isset($current['fileUrlExpiresAt']) ? $current['fileUrlExpiresAt'] : null);
+						if ($report_finalized) {
+							$current['reportFinalized'] = true;
+							$current['reportFinalizedAt'] = !empty($report['reportFinalizedAt']) ? $report['reportFinalizedAt'] : $now;
+						}
 						$current['combinedFileId'] = !empty($report['combinedFileId']) ? $report['combinedFileId'] : (isset($current['combinedFileId']) ? $current['combinedFileId'] : null);
 						$current['combinedJobId'] = !empty($report['combinedJobId']) ? $report['combinedJobId'] : (isset($current['combinedJobId']) ? $current['combinedJobId'] : null);
 						$current['bydaStatus'] = !empty($report['bydaStatus']) ? $report['bydaStatus'] : (isset($current['bydaStatus']) ? $current['bydaStatus'] : null);
@@ -1014,7 +1031,13 @@ function byda_iet_to_local_history_item($record) {
 		'bydaStatus' => !empty($record['bydaStatus']) ? $record['bydaStatus'] : null,
 		'readyUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : (!empty($record['shareUrl']) ? $record['shareUrl'] : null),
 		'fileUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : null,
+		'sourceFileUrl' => !empty($record['sourceFileUrl']) ? $record['sourceFileUrl'] : null,
+		'storageKey' => !empty($record['storageKey']) ? $record['storageKey'] : null,
+		'fileUrlExpiresAt' => !empty($record['fileUrlExpiresAt']) ? $record['fileUrlExpiresAt'] : null,
+		'reportFinalized' => !empty($record['reportFinalized']),
+		'reportFinalizedAt' => !empty($record['reportFinalizedAt']) ? $record['reportFinalizedAt'] : null,
 		'shareUrl' => !empty($record['shareUrl']) ? $record['shareUrl'] : null,
+		'site' => !empty($record['site']) ? $record['site'] : null,
 		'error' => !empty($record['error']) ? $record['error'] : null,
 		'userReference' => !empty($record['input']['userReference']) ? $record['input']['userReference'] : null,
 		'digStartAt' => !empty($record['input']['digStartAt']) ? $record['input']['digStartAt'] : null,
@@ -1078,6 +1101,7 @@ function byda_iet_merge_history_item($local_record, $remote_record) {
 		'readyUrl' => !empty($local_record['fileUrl']) ? $local_record['fileUrl'] : (!empty($local_record['shareUrl']) ? $local_record['shareUrl'] : null),
 		'fileUrl' => !empty($local_record['fileUrl']) ? $local_record['fileUrl'] : null,
 		'shareUrl' => !empty($local_record['shareUrl']) ? $local_record['shareUrl'] : null,
+		'site' => !empty($local_record['site']) ? $local_record['site'] : null,
 		'error' => !empty($local_record['error']) ? $local_record['error'] : null,
 		'userReference' => !empty($remote_record['userReference']) ? $remote_record['userReference'] : (!empty($local_record['input']['userReference']) ? $local_record['input']['userReference'] : null),
 		'digStartAt' => !empty($local_record['input']['digStartAt']) ? $local_record['input']['digStartAt'] : null,
@@ -1182,7 +1206,8 @@ function byda_iet_build_ready_url($record) {
 	}
 
 	$has_report_link = !empty($record['readyUrl']) || !empty($record['fileUrl']) || !empty($record['shareUrl']);
-	if (!$has_report_link) {
+	$remote_enquiry_id = !empty($record['enquiryId']) ? $record['enquiryId'] : (!empty($record['bydaEnquiryId']) ? $record['bydaEnquiryId'] : null);
+	if (!$has_report_link && !$remote_enquiry_id) {
 		return null;
 	}
 
@@ -1191,8 +1216,8 @@ function byda_iet_build_ready_url($record) {
 		return rest_url('byda-iet/v1/enquiries/' . rawurlencode((string) $tracking_token) . '/report');
 	}
 
-	if (!empty($record['enquiryId'])) {
-		return rest_url('byda-iet/v1/enquiries/byda/' . rawurlencode((string) $record['enquiryId']) . '/report');
+	if ($remote_enquiry_id) {
+		return rest_url('byda-iet/v1/enquiries/byda/' . rawurlencode((string) $remote_enquiry_id) . '/report');
 	}
 
 	return null;
@@ -1237,6 +1262,11 @@ function byda_iet_to_status_payload($record) {
 			)
 		),
 		'fileUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : null,
+		'sourceFileUrl' => !empty($record['sourceFileUrl']) ? $record['sourceFileUrl'] : null,
+		'storageKey' => !empty($record['storageKey']) ? $record['storageKey'] : null,
+		'fileUrlExpiresAt' => !empty($record['fileUrlExpiresAt']) ? $record['fileUrlExpiresAt'] : null,
+		'reportFinalized' => !empty($record['reportFinalized']),
+		'reportFinalizedAt' => !empty($record['reportFinalizedAt']) ? $record['reportFinalizedAt'] : null,
 		'shareUrl' => !empty($record['shareUrl']) ? $record['shareUrl'] : null,
 		'error' => !empty($record['error']) ? $record['error'] : null,
 		'site' => !empty($record['site']) ? $record['site'] : null,
@@ -1249,8 +1279,12 @@ function byda_iet_to_status_payload($record) {
 }
 
 function byda_iet_build_remote_status_message($file_url, $share_url, $byda_status = null) {
-	if ($file_url) {
+	if ($file_url && byda_iet_is_all_received_status($byda_status)) {
 		return 'Combined BYDA report is ready.';
+	}
+
+	if ($file_url) {
+		return 'Partial BYDA report is available while responses are still arriving.';
 	}
 
 	if (byda_iet_is_all_received_status($byda_status)) {

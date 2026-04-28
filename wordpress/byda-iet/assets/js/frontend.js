@@ -309,7 +309,7 @@
       : JSON.stringify({ mode: "address", address: normalizeAddress(nextAddress) });
     const normalizedPrevious = isReferenceMode
       ? JSON.stringify({ mode: current.submitted ? "reference" : "address", referenceNumber: currentReference })
-      : JSON.stringify({ mode: current.submitted && currentReference ? "reference" : "address", address: normalizeAddress(current.address || {}) });
+      : JSON.stringify({ mode: "address", address: normalizeAddress(current.address || {}) });
 
     if (normalizedNext === normalizedPrevious) {
       debugLog("Prefill unchanged.", {
@@ -399,7 +399,7 @@
       streetNumber,
       streetName: streetNumber === streetLine.streetNumber ? streetLine.streetName : streetLine.original,
       suburb: resolveAddressPart(sources.suburb, combined.suburb, fallback.suburb),
-      state: normalizeState(resolveAddressPart(sources.state, combined.state, fallback.state || "NSW")),
+      state: normalizeState(resolveAddressPart(sources.state, combined.state, fallback.state)),
       postcode: resolveAddressPart(sources.postcode, combined.postcode, fallback.postcode).replace(/\D/g, "").slice(0, 4),
     };
   }
@@ -590,7 +590,7 @@
 
   function normalizeState(value) {
     const normalized = String(value || "").trim().toUpperCase();
-    return ["NSW", "QLD", "VIC"].includes(normalized) ? normalized : "NSW";
+    return ["NSW", "QLD", "VIC"].includes(normalized) ? normalized : "";
   }
 
   function firstNonEmpty(...values) {

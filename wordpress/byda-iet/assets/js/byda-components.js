@@ -42,7 +42,7 @@ var BydaComponents = (() => {
       streetNumber: "",
       streetName: "",
       suburb: "",
-      state: "NSW",
+      state: "",
       postcode: ""
     },
     enquiry: {
@@ -92,11 +92,11 @@ var BydaComponents = (() => {
     },
     notices: {
       reset: "You can start again at any time.",
-      searchShort: "Enter street number, street name, suburb, and postcode to search.",
+      searchShort: "Enter street number, street name, suburb, state, and postcode to search.",
       datesNeeded: "Add your start and end dates to continue.",
       locationSelected: "Location selected.",
       referenceReady: "Reference number created.",
-      searchEmpty: "Enter street number, street name, suburb, and postcode to see matches.",
+      searchEmpty: "Enter street number, street name, suburb, state, and postcode to see matches.",
       searchNone: "Check the address details to see more matches.",
       optionsLoading: "Loading enquiry options.",
       optionsError: "Enquiry options could not be loaded.",
@@ -116,7 +116,7 @@ var BydaComponents = (() => {
       streetNamePlaceholder: "Pirrama Rd",
       suburbPlaceholder: "Pyrmont",
       postcodePlaceholder: "2009",
-      helper: "Matches appear below once enough address details are entered.",
+      helper: "Matches appear below once the address and state are entered.",
       resultLabel: "Match",
       selectedLabel: "Selected location"
     },
@@ -494,6 +494,18 @@ var BydaComponents = (() => {
   function getAuthorityLabel(authority = {}) {
     return authority.organisationType ? `${authority.name} (${authority.organisationType})` : authority.name;
   }
+  function buildAddressOnlySite(address = {}) {
+    const label = formatAddressLabel(address);
+    return {
+      id: `address-only-${buildIdentifierPart(label, "ADDRESS")}`,
+      label,
+      title: label,
+      source: "Entered address",
+      address: { ...address },
+      state: String(address.state || "").trim().toUpperCase(),
+      addressOnly: true
+    };
+  }
   function createInitialValue(input = {}) {
     const next = cloneValue(DEFAULT_VALUE);
     if (input.address && typeof input.address === "object") Object.assign(next.address, input.address);
@@ -527,7 +539,7 @@ var BydaComponents = (() => {
   }
   function hasAddressSearchInput(address = {}) {
     return Boolean(
-      String(address.streetNumber || "").trim() && String(address.streetName || "").trim().length >= 2 && String(address.suburb || "").trim().length >= 2 && /^\d{4}$/.test(String(address.postcode || "").trim())
+      String(address.streetNumber || "").trim() && String(address.streetName || "").trim().length >= 2 && String(address.suburb || "").trim().length >= 2 && STATE_OPTIONS.includes(String(address.state || "").trim().toUpperCase()) && /^\d{4}$/.test(String(address.postcode || "").trim())
     );
   }
   function getAddressSeed(address = {}) {
@@ -1104,9 +1116,10 @@ var BydaComponents = (() => {
       this.ensureEnquiryDefaults();
       const authorityId = String(this.state.enquiry.authorityId || "").trim();
       const otherAuthorityName = String(this.state.enquiry.otherAuthorityName || "").trim();
+      const selectedSite = this.state.selectedSite && !this.state.selectedSite.addressOnly && this.state.selectedSite.polygon ? { ...this.state.selectedSite } : void 0;
       return {
         address: { ...this.state.address },
-        resolvedSite: this.state.selectedSite ? { ...this.state.selectedSite } : void 0,
+        resolvedSite: selectedSite,
         userReference: String(this.state.enquiry.userReference || "").trim() || void 0,
         digStartAt: this.state.enquiry.digStartAt,
         digEndAt: this.state.enquiry.digEndAt,
@@ -1175,12 +1188,7 @@ var BydaComponents = (() => {
         this.state.tracking.completedAt = (/* @__PURE__ */ new Date()).toISOString();
         this.state.tracking.updatedAt = this.state.tracking.completedAt;
         this.setStepIndex(2, { emitEvent: true, reason: "complete" });
-        const status = result.token ? await this.loadTrackingStatus(result.token) : null;
-        componentDebugLog(this, "Immediate post-create status loaded.", {
-          status,
-          result
-        });
-        const latestStatus = status || {
+        const latestStatus = {
           status: result.status || "processing",
           displayStatus: result.displayStatus || result.status || "processing",
           bydaStatus: result.bydaStatus || this.state.tracking.bydaStatus,
@@ -1193,6 +1201,19 @@ var BydaComponents = (() => {
         this.noticeTone = String(latestStatus.status || "").toLowerCase() === "failed" ? "neutral" : "positive";
         this.emitComponentEvent("byda-process-change", { reason: "complete" });
         this.emitComponentEvent("byda-process-complete", { reason: "complete" });
+        if (result.token) {
+          void this.loadTrackingStatus(result.token).then((status) => {
+            componentDebugLog(this, "Immediate post-create status loaded.", {
+              status,
+              result
+            });
+          }).catch((error) => {
+            componentDebugLog(this, "Immediate post-create status refresh failed.", {
+              error: error instanceof Error ? error.message : String(error),
+              result
+            });
+          });
+        }
       } catch (error) {
         componentDebugLog(this, "Completing enquiry flow failed.", {
           error: error instanceof Error ? error.message : String(error)
@@ -1262,7 +1283,8 @@ var BydaComponents = (() => {
       const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
       const readonlyAddress = this.isAddressReadonly();
       const enteredAddress = formatAddressLabel(this.state.address);
-      const searchResults = this.state.candidates.length ? this.state.candidates : this.state.existingEnquiries.length && enteredAddress ? [{ id: "history-only-result", title: enteredAddress, source: "Address history", copy: "Past enquiries found for this address.", resolvedSite: null }] : [];
+      const historyResolvedSite = this.state.existingEnquiries.find((enquiry) => enquiry.site?.polygon)?.site || null;
+      const searchResults = this.state.candidates.length ? this.state.candidates : this.state.existingEnquiries.length && enteredAddress ? [{ id: "history-only-result", title: enteredAddress, source: "Address history", copy: "Past enquiries found for this address.", resolvedSite: historyResolvedSite, addressOnly: !historyResolvedSite }] : [];
       const candidates = this.candidatesLoading ? `
       <div class="empty-state wide">
         <span class="field-label">Matches</span>
@@ -1271,14 +1293,14 @@ var BydaComponents = (() => {
     ` : searchResults.length ? `
       <div class="search-results">
         ${searchResults.map((candidate, candidateIndex) => `
-          <div class="search-result ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? "active" : ""}">
+          <div class="search-result ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) || candidate.addressOnly && selectedSite?.addressOnly ? "active" : ""}">
             <div class="search-result-head">
               <div>
                 <span class="field-label">${USER_COPY.search.resultLabel}</span>
                 <strong class="search-result-title">${escapeHtml(candidate.title)}</strong>
                 <small class="search-result-source">${escapeHtml(candidate.source || candidate.copy || "Address result")}</small>
               </div>
-              ${candidate.resolvedSite ? `<button class="button ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? "primary" : ""}" type="button" data-action="select-candidate" data-candidate-id="${escapeHtml(candidate.id)}">${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) ? USER_COPY.buttons.chosen : USER_COPY.buttons.choose}</button>` : ""}
+              ${candidate.resolvedSite || candidate.addressOnly ? `<button class="button ${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) || candidate.addressOnly && selectedSite?.addressOnly ? "primary" : ""}" type="button" data-action="select-candidate" data-candidate-id="${escapeHtml(candidate.id)}">${selectedSite?.id === (candidate.resolvedSite?.id || candidate.id) || candidate.addressOnly && selectedSite?.addressOnly ? USER_COPY.buttons.chosen : USER_COPY.buttons.choose}</button>` : ""}
             </div>
             ${candidate.copy ? `<p class="search-result-copy">${escapeHtml(candidate.copy)}</p>` : ""}
             ${candidateIndex === 0 ? `
@@ -1376,6 +1398,7 @@ var BydaComponents = (() => {
           <label class="field">
             <span class="field-label">${USER_COPY.search.state}</span>
             <select class="control" data-scope="address" name="state">
+              <option value="" ${a.state ? "" : "selected"}></option>
               ${STATE_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${a.state === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
             </select>
           </label>
@@ -1555,16 +1578,16 @@ var BydaComponents = (() => {
       }
       if (action === "select-candidate") {
         const candidateId = actionTarget.getAttribute("data-candidate-id");
-        const selectedCandidate = this.state.candidates.find((candidate) => candidate.id === candidateId);
-        if (!selectedCandidate?.resolvedSite) return;
-        this.state.selectedSite = { ...selectedCandidate.resolvedSite };
+        const selectedCandidate = this.state.candidates.find((candidate) => candidate.id === candidateId) || (candidateId === "history-only-result" && this.state.existingEnquiries.length ? { id: candidateId, addressOnly: true } : null);
+        if (!selectedCandidate?.resolvedSite && !selectedCandidate?.addressOnly) return;
+        this.state.selectedSite = selectedCandidate.resolvedSite ? { ...selectedCandidate.resolvedSite } : buildAddressOnlySite(this.state.address);
         this.setDraftTracking();
         this.state.enquiry.userReference = "";
         this.ensureAutoUserReference();
         this.notice = USER_COPY.notices.locationSelected;
         this.noticeTone = "positive";
         this.render();
-        void this.loadAuthorities(this.state.selectedSite);
+        if (!this.state.selectedSite.addressOnly) void this.loadAuthorities(this.state.selectedSite);
         this.emitComponentEvent("byda-process-change", { reason: "select-site" });
         return;
       }

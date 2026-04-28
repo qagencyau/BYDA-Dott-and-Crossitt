@@ -131,6 +131,8 @@ function snapshotSummary(snapshot = {}) {
 		hasSourceFileUrl: Boolean(snapshot.sourceFileUrl),
 		hasStorageKey: Boolean(snapshot.storageKey),
 		fileUrlExpiresAt: snapshot.fileUrlExpiresAt || null,
+		reportFinalized: Boolean(snapshot.reportFinalized),
+		reportFinalizedAt: snapshot.reportFinalizedAt || null,
 		combinedFileId: snapshot.combinedFileId || null,
 		combinedJobId: snapshot.combinedJobId || null,
 		error: snapshot.error || null,
@@ -156,6 +158,8 @@ function jobSummary(job = {}) {
 		hasFileUrl: Boolean(job.fileUrl),
 		hasStorageKey: Boolean(job.storageKey),
 		fileUrlExpiresAt: job.fileUrlExpiresAt || null,
+		reportFinalized: Boolean(job.reportFinalized),
+		reportFinalizedAt: job.reportFinalizedAt || null,
 		combinedFileId: job.combinedFileId || "",
 		combinedJobId: job.combinedJobId || "",
 		pendingCallback: Boolean(job.pendingSnapshot),
@@ -408,24 +412,22 @@ function buildSpacesKey(enquiryId, combinedFileId, sourceUrl) {
 	const parts = [
 		config.spaces.keyPrefix,
 		safeKeySegment(enquiryId, "unknown-enquiry"),
-		safeKeySegment(combinedFileId, "combined-report"),
-		getReportFilename(sourceUrl, enquiryId),
+		"combined-report.pdf",
 	].filter(Boolean);
 
 	return parts.join("/");
 }
 
-async function spacesObjectExists(key) {
+async function getSpacesObjectHead(key) {
 	try {
-		await getSpacesClient().send(new HeadObjectCommand({
+		return await getSpacesClient().send(new HeadObjectCommand({
 			Bucket: config.spaces.bucket,
 			Key: key,
 		}));
-		return true;
 	} catch (error) {
 		const status = Number(error && (error.$metadata && error.$metadata.httpStatusCode));
 		if (status === 404 || error.name === "NotFound") {
-			return false;
+			return null;
 		}
 
 		throw error;
@@ -459,9 +461,12 @@ async function downloadReport(sourceUrl) {
 	};
 }
 
-async function uploadReportToSpaces(key, sourceUrl, enquiryId, combinedFileId) {
-	if (await spacesObjectExists(key)) {
-		return;
+async function uploadReportToSpaces(key, sourceUrl, enquiryId, combinedFileId, options = {}) {
+	const existing = await getSpacesObjectHead(key);
+	const existingMetadata = existing && existing.Metadata && typeof existing.Metadata === "object" ? existing.Metadata : {};
+	const existingIsFinal = ["1", "true", "yes"].includes(String(existingMetadata["byda-report-final"] || "").toLowerCase());
+	if (existingIsFinal) {
+		return { uploaded: false, finalLocked: true };
 	}
 
 	const report = await downloadReport(sourceUrl);
@@ -473,6 +478,10 @@ async function uploadReportToSpaces(key, sourceUrl, enquiryId, combinedFileId) {
 	if (combinedFileId) {
 		metadata["byda-combined-file-id"] = String(combinedFileId);
 	}
+	if (options.final) {
+		metadata["byda-report-final"] = "true";
+		metadata["byda-report-finalized-at"] = new Date().toISOString();
+	}
 
 	await getSpacesClient().send(new PutObjectCommand({
 		Bucket: config.spaces.bucket,
@@ -483,6 +492,8 @@ async function uploadReportToSpaces(key, sourceUrl, enquiryId, combinedFileId) {
 		ACL: "private",
 		Metadata: metadata,
 	}));
+
+	return { uploaded: true, finalLocked: Boolean(options.final) };
 }
 
 async function signSpacesReport(key) {
@@ -508,12 +519,16 @@ function signedUrlIsFresh(expiresAt) {
 	return Number.isFinite(timestamp) && timestamp - Date.now() > 5 * 60 * 1000;
 }
 
-async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, existing = {}) {
+async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, existing = {}, options = {}) {
+	const finalRequested = Boolean(options.final);
+	const existingFinalized = Boolean(existing.reportFinalized);
 	log("Report storage resolution started.", {
 		enquiryId,
 		combinedFileId: combinedFileId || null,
 		sourceFileUrl: urlSummary(sourceFileUrl),
 		spacesEnabled: config.spaces.enabled,
+		finalRequested,
+		reportFinalized: existingFinalized,
 		existing: {
 			hasFileUrl: Boolean(existing.fileUrl),
 			hasSourceFileUrl: Boolean(existing.sourceFileUrl),
@@ -531,6 +546,8 @@ async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, ex
 			sourceFileUrl: existing.sourceFileUrl || "",
 			storageKey: existing.storageKey || "",
 			fileUrlExpiresAt: existing.fileUrlExpiresAt || null,
+			reportFinalized: existingFinalized,
+			reportFinalizedAt: existing.reportFinalizedAt || null,
 		};
 	}
 
@@ -545,34 +562,65 @@ async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, ex
 			sourceFileUrl,
 			storageKey: null,
 			fileUrlExpiresAt: null,
+			reportFinalized: finalRequested || existingFinalized,
+			reportFinalizedAt: finalRequested ? new Date().toISOString() : existing.reportFinalizedAt || null,
 		};
 	}
 
 	const storageKey = existing.storageKey || buildSpacesKey(enquiryId, combinedFileId, sourceFileUrl);
-	if (existing.fileUrl && existing.storageKey === storageKey && signedUrlIsFresh(existing.fileUrlExpiresAt)) {
+	if (existingFinalized && existing.fileUrl && existing.storageKey === storageKey && signedUrlIsFresh(existing.fileUrlExpiresAt)) {
 		log("Report storage resolution reusing existing fresh signed URL.", {
 			enquiryId,
 			combinedFileId: combinedFileId || null,
 			storageKey,
 			fileUrl: urlSummary(existing.fileUrl),
 			fileUrlExpiresAt: existing.fileUrlExpiresAt || null,
+			reportFinalized: existingFinalized,
 		});
 		return {
 			fileUrl: existing.fileUrl,
 			sourceFileUrl: existing.sourceFileUrl || sourceFileUrl,
 			storageKey,
 			fileUrlExpiresAt: existing.fileUrlExpiresAt,
+			reportFinalized: true,
+			reportFinalizedAt: existing.reportFinalizedAt || null,
 		};
 	}
 
-	await uploadReportToSpaces(storageKey, sourceFileUrl, enquiryId, combinedFileId);
+	if (existingFinalized) {
+		const signed = await signSpacesReport(storageKey);
+		log("Report storage resolution refreshed signed URL for finalized Spaces report.", {
+			enquiryId,
+			combinedFileId: combinedFileId || null,
+			storageKey,
+			fileUrl: urlSummary(signed.url),
+			fileUrlExpiresAt: signed.expiresAt,
+			reportFinalized: true,
+		});
+		return {
+			fileUrl: signed.url,
+			sourceFileUrl: existing.sourceFileUrl || sourceFileUrl,
+			storageKey,
+			fileUrlExpiresAt: signed.expiresAt,
+			reportFinalized: true,
+			reportFinalizedAt: existing.reportFinalizedAt || null,
+		};
+	}
+
+	const uploadResult = await uploadReportToSpaces(storageKey, sourceFileUrl, enquiryId, combinedFileId, { final: finalRequested });
 	const signed = await signSpacesReport(storageKey);
+	const reportFinalized = existingFinalized || finalRequested || Boolean(uploadResult.finalLocked);
+	const reportFinalizedAt = reportFinalized
+		? (finalRequested ? new Date().toISOString() : existing.reportFinalizedAt || null)
+		: null;
 	log("Report storage resolution uploaded/signed Spaces report.", {
 		enquiryId,
 		combinedFileId: combinedFileId || null,
 		storageKey,
 		fileUrl: urlSummary(signed.url),
 		fileUrlExpiresAt: signed.expiresAt,
+		uploaded: uploadResult.uploaded,
+		reportFinalized,
 	});
 
 	return {
@@ -580,6 +628,8 @@ async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, ex
 		sourceFileUrl,
 		storageKey,
 		fileUrlExpiresAt: signed.expiresAt,
+		reportFinalized,
+		reportFinalizedAt,
 	};
 }
 
@@ -933,13 +983,18 @@ async function bydaProbeFileUrl(fileId) {
 	}
 }
 
-function canRequestCombinedReport(bydaStatus, combinedFileId, combinedJobId) {
-	return String(bydaStatus || "").trim().toUpperCase() === "ALL_RECEIVED" || !!combinedFileId || !!combinedJobId;
+function isAllReceivedStatus(status) {
+	return String(status || "").trim().toUpperCase() === "ALL_RECEIVED";
 }
 
-async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
+function canRequestCombinedReport(bydaStatus, combinedFileId, combinedJobId, options = {}) {
+	return isAllReceivedStatus(bydaStatus) || Boolean(options.allowPartialReport) || !!combinedFileId || !!combinedJobId;
+}
+
+async function bydaGetStatusSnapshot(enquiryId, existing = {}, options = {}) {
 	log("BYDA status snapshot started.", {
 		enquiryId,
+		allowPartialReport: Boolean(options.allowPartialReport),
 		existing: {
 			bydaStatus: existing.bydaStatus || "",
 			hasShareUrl: Boolean(existing.shareUrl),
@@ -948,10 +1003,12 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 			hasStorageKey: Boolean(existing.storageKey),
 			combinedFileId: existing.combinedFileId || "",
 			combinedJobId: existing.combinedJobId || "",
+			reportFinalized: Boolean(existing.reportFinalized),
 		},
 	});
 	const detail = unwrapBydaEnquiryResponse(await bydaGetEnquiry(enquiryId));
 	const bydaStatus = detail && typeof detail === "object" ? String(detail.status || existing.bydaStatus || "") : String(existing.bydaStatus || "");
+	const finalStatus = isAllReceivedStatus(bydaStatus);
 	log("BYDA enquiry detail loaded.", {
 		enquiryId,
 		detailId: detail && detail.id ? detail.id : null,
@@ -981,18 +1038,31 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 
 	let combinedFileId = existing.combinedFileId || "";
 	let combinedJobId = existing.combinedJobId || "";
-	if (!combinedFileId && canRequestCombinedReport(bydaStatus, combinedFileId, combinedJobId)) {
+	let sourceFileUrl = existing.sourceFileUrl || (!config.spaces.enabled ? existing.fileUrl || "" : "");
+	const needsFinalDownload = finalStatus && !existing.reportFinalized;
+	const previousCombinedFileId = combinedFileId;
+	const previousCombinedJobId = combinedJobId;
+	const previousSourceFileUrl = sourceFileUrl;
+	if (needsFinalDownload) {
+		combinedFileId = "";
+		combinedJobId = "";
+		sourceFileUrl = "";
+	}
+	let requestedCombinedFileId = "";
+	if (!existing.reportFinalized && canRequestCombinedReport(bydaStatus, combinedFileId, combinedJobId, options)) {
 		log("Combined PDF request is allowed; requesting combined report.", {
 			enquiryId,
 			bydaStatus,
 			combinedFileId,
 			combinedJobId,
+			allowPartialReport: Boolean(options.allowPartialReport),
 		});
 		try {
 			const combined = await bydaRequestCombinedPdf(enquiryId);
 			if (combined && typeof combined === "object") {
 				combinedFileId = combined.File && combined.File.id ? String(combined.File.id) : combinedFileId;
 				combinedJobId = combined.Job && combined.Job.id ? String(combined.Job.id) : combinedJobId;
+				requestedCombinedFileId = combined.File && combined.File.id ? String(combined.File.id) : "";
 			}
 			log("Combined PDF request returned.", {
 				enquiryId,
@@ -1008,8 +1078,7 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 		}
 	}
 
-	let sourceFileUrl = existing.sourceFileUrl || (!config.spaces.enabled ? existing.fileUrl || "" : "");
-	if (combinedFileId && !sourceFileUrl) {
+	if (combinedFileId && (!sourceFileUrl || (finalStatus && !existing.reportFinalized))) {
 		log("Probing BYDA file URL for combined file.", {
 			enquiryId,
 			combinedFileId,
@@ -1022,8 +1091,18 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 		});
 	}
 
-	const reportStorage = await resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, existing);
+	const finalCombinedResolved = Boolean(needsFinalDownload && requestedCombinedFileId && sourceFileUrl);
+	if (needsFinalDownload && !finalCombinedResolved) {
+		combinedFileId = previousCombinedFileId;
+		combinedJobId = previousCombinedJobId;
+		sourceFileUrl = previousSourceFileUrl;
+	}
+
+	const reportStorage = await resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, existing, {
+		final: finalStatus && (!needsFinalDownload || finalCombinedResolved),
+	});
 	const fileUrl = reportStorage.fileUrl || "";
+	const reportFinalized = Boolean(reportStorage.reportFinalized);
 
 	const snapshot = {
 		enquiryId: detail && detail.id ? detail.id : enquiryId,
@@ -1034,6 +1113,8 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 		sourceFileUrl: reportStorage.sourceFileUrl || sourceFileUrl || null,
 		storageKey: reportStorage.storageKey || null,
 		fileUrlExpiresAt: reportStorage.fileUrlExpiresAt || null,
+		reportFinalized,
+		reportFinalizedAt: reportStorage.reportFinalizedAt || null,
 		readyUrl: fileUrl || shareUrl || null,
 		combinedFileId: combinedFileId || null,
 		combinedJobId: combinedJobId || null,
@@ -1042,8 +1123,8 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}) {
 		userReference: detail && detail.userReference ? detail.userReference : null,
 		createdAt: detail && detail.createdAt ? detail.createdAt : null,
 		updatedAt: detail && detail.updatedAt ? detail.updatedAt : null,
-		status: fileUrl ? "ready" : "processing",
-		pollerStatus: fileUrl ? "completed" : "polling",
+		status: reportFinalized && fileUrl ? "ready" : "processing",
+		pollerStatus: reportFinalized && fileUrl ? "completed" : "polling",
 	};
 	log("BYDA status snapshot resolved.", {
 		enquiryId,
@@ -1065,6 +1146,8 @@ function buildSnapshot(job, overrides = {}) {
 		sourceFileUrl: overrides.sourceFileUrl ?? job.sourceFileUrl ?? null,
 		storageKey: overrides.storageKey ?? job.storageKey ?? null,
 		fileUrlExpiresAt: overrides.fileUrlExpiresAt ?? job.fileUrlExpiresAt ?? null,
+		reportFinalized: overrides.reportFinalized ?? job.reportFinalized ?? false,
+		reportFinalizedAt: overrides.reportFinalizedAt ?? job.reportFinalizedAt ?? null,
 		combinedFileId: overrides.combinedFileId ?? job.combinedFileId ?? null,
 		combinedJobId: overrides.combinedJobId ?? job.combinedJobId ?? null,
 		pollerStatus: overrides.pollerStatus ?? "polling",
@@ -1082,7 +1165,7 @@ function isTerminalSnapshot(snapshot) {
 	}
 
 	const status = String(snapshot.pollerStatus || "").toLowerCase();
-	return !!snapshot.fileUrl || ["completed", "failed", "expired", "cancelled"].includes(status);
+	return (Boolean(snapshot.fileUrl) && Boolean(snapshot.reportFinalized)) || ["completed", "failed", "expired", "cancelled"].includes(status);
 }
 
 async function sendCallback(job, snapshot) {
@@ -1152,6 +1235,8 @@ async function pollBydaEnquiry(job) {
 	job.sourceFileUrl = status.sourceFileUrl || "";
 	job.storageKey = status.storageKey || "";
 	job.fileUrlExpiresAt = status.fileUrlExpiresAt || null;
+	job.reportFinalized = Boolean(status.reportFinalized);
+	job.reportFinalizedAt = status.reportFinalizedAt || null;
 
 	const snapshot = buildSnapshot(job, {
 		bydaStatus: status.bydaStatus || null,
@@ -1160,9 +1245,11 @@ async function pollBydaEnquiry(job) {
 		sourceFileUrl: status.sourceFileUrl || null,
 		storageKey: status.storageKey || null,
 		fileUrlExpiresAt: status.fileUrlExpiresAt || null,
+		reportFinalized: Boolean(status.reportFinalized),
+		reportFinalizedAt: status.reportFinalizedAt || null,
 		combinedFileId: status.combinedFileId || null,
 		combinedJobId: status.combinedJobId || null,
-		pollerStatus: status.fileUrl ? "completed" : "polling",
+		pollerStatus: status.reportFinalized && status.fileUrl ? "completed" : "polling",
 		error: null,
 	});
 	log("Polling BYDA enquiry produced snapshot.", {
@@ -1214,7 +1301,7 @@ async function runJob(jobId) {
 			job.finalStatus = "";
 
 			if (finalStatus) {
-				job.status = job.fileUrl ? "completed" : finalStatus;
+				job.status = job.fileUrl && job.reportFinalized ? "completed" : finalStatus;
 				job.running = false;
 				log("Job completed from pending callback.", {
 					token: job.token,
@@ -1278,7 +1365,7 @@ async function runJob(jobId) {
 		}
 
 		job.lastError = "";
-		if (snapshot.fileUrl) {
+		if (snapshot.fileUrl && snapshot.reportFinalized) {
 			job.status = "completed";
 			job.running = false;
 			log("Job completed.", {
@@ -1362,6 +1449,8 @@ function startJob(payload) {
 		sourceFileUrl: "",
 		storageKey: "",
 		fileUrlExpiresAt: null,
+		reportFinalized: false,
+		reportFinalizedAt: null,
 		combinedFileId: "",
 		combinedJobId: "",
 		lastDeliveredHash: "",
@@ -1447,6 +1536,8 @@ function startCreateJob(payload) {
 		sourceFileUrl: "",
 		storageKey: "",
 		fileUrlExpiresAt: null,
+		reportFinalized: false,
+		reportFinalizedAt: null,
 		combinedFileId: "",
 		combinedJobId: "",
 		lastDeliveredHash: "",
@@ -1607,6 +1698,21 @@ function jsonError(res, status, error) {
 	return jsonResponse(res, status, { error: extractResponseError(error) });
 }
 
+function existingReportStateFromQuery(searchParams) {
+	return {
+		bydaStatus: searchParams.get("bydaStatus") || "",
+		shareUrl: searchParams.get("shareUrl") || "",
+		fileUrl: searchParams.get("fileUrl") || "",
+		sourceFileUrl: searchParams.get("sourceFileUrl") || "",
+		storageKey: searchParams.get("storageKey") || "",
+		fileUrlExpiresAt: searchParams.get("fileUrlExpiresAt") || null,
+		reportFinalized: ["1", "true", "yes"].includes(String(searchParams.get("reportFinalized") || "").toLowerCase()),
+		reportFinalizedAt: searchParams.get("reportFinalizedAt") || null,
+		combinedFileId: searchParams.get("combinedFileId") || "",
+		combinedJobId: searchParams.get("combinedJobId") || "",
+	};
+}
+
 function errorStatus(error, fallback = 500) {
 	const status = Number(error && error.status);
 	return Number.isInteger(status) && status >= 400 && status < 600 ? status : fallback;
@@ -1737,7 +1843,9 @@ const server = http.createServer(async (req, res) => {
 
 		try {
 			const enquiryId = decodeURIComponent(enquiryReportMatch[1]);
-			const status = await bydaGetStatusSnapshot(enquiryId);
+			const status = await bydaGetStatusSnapshot(enquiryId, existingReportStateFromQuery(requestUrl.searchParams), {
+				allowPartialReport: true,
+			});
 			return jsonResponse(res, 200, {
 				enquiryId: status.enquiryId,
 				reportUrl: status.fileUrl || status.shareUrl || null,
@@ -1745,6 +1853,8 @@ const server = http.createServer(async (req, res) => {
 				sourceFileUrl: status.sourceFileUrl || null,
 				storageKey: status.storageKey || null,
 				fileUrlExpiresAt: status.fileUrlExpiresAt || null,
+				reportFinalized: Boolean(status.reportFinalized),
+				reportFinalizedAt: status.reportFinalizedAt || null,
 				shareUrl: status.shareUrl || null,
 				combinedFileId: status.combinedFileId || null,
 				combinedJobId: status.combinedJobId || null,

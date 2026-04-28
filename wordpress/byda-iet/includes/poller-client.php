@@ -175,15 +175,29 @@ function byda_iet_external_poller_get_enquiry_status($enquiry_id, $settings = nu
 	);
 }
 
-function byda_iet_external_poller_get_enquiry_report($enquiry_id, $settings = null) {
+function byda_iet_external_poller_get_enquiry_report($enquiry_id, $settings = null, $existing = array()) {
 	$enquiry_id = trim((string) $enquiry_id);
 	if ('' === $enquiry_id) {
 		return new WP_Error('byda_iet_poller_invalid_enquiry_id', 'BYDA enquiry ID is required.');
 	}
 
+	$query = array();
+	if (is_array($existing)) {
+		foreach (array('bydaStatus', 'sourceFileUrl', 'storageKey', 'fileUrlExpiresAt', 'reportFinalizedAt', 'combinedFileId', 'combinedJobId') as $key) {
+			if (!empty($existing[$key])) {
+				$query[$key] = $existing[$key];
+			}
+		}
+		if (!empty($existing['reportFinalized'])) {
+			$query['reportFinalized'] = true;
+		}
+	}
+
+	$pathname = byda_iet_build_url('/enquiries/' . rawurlencode($enquiry_id) . '/report', $query);
+
 	return byda_iet_external_poller_request(
 		'GET',
-		'/enquiries/' . rawurlencode($enquiry_id) . '/report',
+		$pathname,
 		null,
 		$settings,
 		30
@@ -340,6 +354,8 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 	$source_file_url = !empty($payload['sourceFileUrl']) ? esc_url_raw((string) $payload['sourceFileUrl']) : '';
 	$storage_key = isset($payload['storageKey']) ? trim((string) $payload['storageKey']) : '';
 	$file_url_expires_at = isset($payload['fileUrlExpiresAt']) ? trim((string) $payload['fileUrlExpiresAt']) : '';
+	$report_finalized = !empty($payload['reportFinalized']);
+	$report_finalized_at = isset($payload['reportFinalizedAt']) ? trim((string) $payload['reportFinalizedAt']) : '';
 	$combined_file_id = isset($payload['combinedFileId']) ? trim((string) $payload['combinedFileId']) : '';
 	$combined_job_id = isset($payload['combinedJobId']) ? trim((string) $payload['combinedJobId']) : '';
 	$byda_status = isset($payload['bydaStatus']) ? trim((string) $payload['bydaStatus']) : '';
@@ -363,6 +379,8 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 			'combinedJobId' => $combined_job_id,
 			'storageKey' => $storage_key,
 			'fileUrlExpiresAt' => $file_url_expires_at,
+			'reportFinalized' => $report_finalized,
+			'reportFinalizedAt' => $report_finalized_at,
 			'error' => $error,
 		),
 		'debug'
@@ -370,7 +388,7 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 
 	$updated_record = byda_iet_update_enquiry_record(
 		$token,
-		static function ($current) use ($incoming_enquiry_id, $share_url, $file_url, $source_file_url, $storage_key, $file_url_expires_at, $combined_file_id, $combined_job_id, $byda_status, $poller_status, $error) {
+		static function ($current) use ($incoming_enquiry_id, $share_url, $file_url, $source_file_url, $storage_key, $file_url_expires_at, $report_finalized, $report_finalized_at, $combined_file_id, $combined_job_id, $byda_status, $poller_status, $error) {
 			$now = byda_iet_now_iso8601();
 			$resolved_share_url = '' !== $share_url ? $share_url : (isset($current['shareUrl']) ? $current['shareUrl'] : null);
 			$resolved_file_url = '' !== $file_url ? $file_url : (isset($current['fileUrl']) ? $current['fileUrl'] : null);
@@ -405,6 +423,10 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 			if ('' !== $file_url_expires_at) {
 				$current['fileUrlExpiresAt'] = $file_url_expires_at;
 			}
+			if ($report_finalized) {
+				$current['reportFinalized'] = true;
+				$current['reportFinalizedAt'] = '' !== $report_finalized_at ? $report_finalized_at : $now;
+			}
 			if ('' !== $combined_file_id) {
 				$current['combinedFileId'] = $combined_file_id;
 			}
@@ -412,7 +434,7 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 				$current['combinedJobId'] = $combined_job_id;
 			}
 
-			if ($resolved_file_url) {
+			if ($resolved_file_url && !empty($current['reportFinalized'])) {
 				$current['status'] = 'ready';
 				$current['message'] = byda_iet_build_live_report_message($resolved_file_url, $resolved_share_url, $resolved_byda_status);
 				$current['error'] = null;
@@ -428,7 +450,7 @@ function byda_iet_handle_external_poller_callback($payload, $settings = null) {
 				return $current;
 			}
 
-			if ('ready' !== (isset($current['status']) ? $current['status'] : '')) {
+			if (empty($current['reportFinalized']) || 'ready' !== (isset($current['status']) ? $current['status'] : '')) {
 				$current['status'] = 'processing';
 			}
 			$current['message'] = byda_iet_build_live_report_message($resolved_file_url, $resolved_share_url, $resolved_byda_status);

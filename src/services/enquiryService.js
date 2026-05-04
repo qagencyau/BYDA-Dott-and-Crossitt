@@ -303,7 +303,7 @@ export class EnquiryService {
       enquiryId: detail?.id ?? enquiryId,
       externalId: detail?.externalId ?? localRecord?.bydaExternalId ?? null,
       bydaStatus: detail?.status ?? localRecord?.bydaStatus ?? null,
-      readyUrl: fileUrl ?? shareUrl ?? null,
+      readyUrl: fileUrl ?? null,
       fileUrl,
       shareUrl,
       error: localRecord?.error ?? null,
@@ -332,13 +332,13 @@ export class EnquiryService {
     }
 
     if (!this.bydaClient.isLive()) {
-      return localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+      return localRecord?.fileUrl ?? null;
     }
 
     const resolvedEnquiryId = enquiryId ?? localRecord?.bydaEnquiryId ?? null;
 
     if (!resolvedEnquiryId) {
-      return localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+      return localRecord?.fileUrl ?? null;
     }
 
     const shareUrl =
@@ -394,7 +394,7 @@ export class EnquiryService {
       }));
     }
 
-    return fileUrl ?? shareUrl ?? localRecord?.shareUrl ?? localRecord?.fileUrl ?? null;
+    return fileUrl ?? localRecord?.fileUrl ?? null;
   }
 
   async runLiveDiagnostics({ resolvedSite } = {}) {
@@ -522,7 +522,7 @@ function toLocalHistoryItem(record) {
     enquiryId: record.bydaEnquiryId ?? null,
     externalId: record.bydaExternalId ?? null,
     bydaStatus: record.bydaStatus ?? null,
-    readyUrl: record.fileUrl ?? record.shareUrl ?? null,
+    readyUrl: record.fileUrl ?? null,
     fileUrl: record.fileUrl ?? null,
     shareUrl: record.shareUrl ?? null,
     error: record.error ?? null,
@@ -578,7 +578,7 @@ function mergeHistoryItem(localRecord, remoteRecord) {
     enquiryId: remoteRecord.enquiryId ?? localRecord.bydaEnquiryId ?? null,
     externalId: remoteRecord.externalId ?? localRecord.bydaExternalId ?? null,
     bydaStatus: remoteRecord.bydaStatus ?? localRecord.bydaStatus ?? null,
-    readyUrl: localRecord.fileUrl ?? localRecord.shareUrl ?? null,
+    readyUrl: localRecord.fileUrl ?? null,
     fileUrl: localRecord.fileUrl ?? null,
     shareUrl: localRecord.shareUrl ?? null,
     error: localRecord.error ?? null,

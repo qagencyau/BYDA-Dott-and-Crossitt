@@ -26,6 +26,8 @@ It follows the same service shape as the existing `poller-example`:
 - `BYDA_CLIENT_ID` (required)
 - `BYDA_CLIENT_SECRET` (required)
 - `REQUEST_TIMEOUT_MS` (default `20000`)
+- `REPORT_WAIT_TIMEOUT_MS` (default `75000`; how long `GET /enquiries/:id/report` waits for BYDA to expose the PDF and for storage/signing to complete)
+- `REPORT_WAIT_INTERVAL_MS` (default `5000`; retry interval while waiting for the report URL)
 - `JOB_INITIAL_DELAY_MS` (default `30000` / 30 seconds)
 - `JOB_BASE_DELAY_MS` (default `120000` / 2 minutes)
 - `JOB_MAX_DELAY_MS` (default `3600000` / 1 hour)
@@ -121,6 +123,8 @@ For DigitalOcean, deploy the image as a web service/container and set the HTTP p
 - `BYDA_CLIENT_SECRET`
 - `BYDA_BASE_URL` if overriding the environment default
 - `REQUEST_TIMEOUT_MS` if required
+- `REPORT_WAIT_TIMEOUT_MS` if required
+- `REPORT_WAIT_INTERVAL_MS` if required
 - `JOB_INITIAL_DELAY_MS` if required
 - `JOB_BASE_DELAY_MS` if required
 - `JOB_MAX_DELAY_MS` if required

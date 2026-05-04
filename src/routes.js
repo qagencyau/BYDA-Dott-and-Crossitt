@@ -109,7 +109,7 @@ function buildReadyUrl(record) {
     return null;
   }
 
-  const hasReportLink = Boolean(record.readyUrl ?? record.fileUrl ?? record.shareUrl);
+  const hasReportLink = Boolean(record.fileUrl ?? record.storageKey ?? record.enquiryId ?? record.bydaEnquiryId);
 
   if (!hasReportLink) {
     return null;

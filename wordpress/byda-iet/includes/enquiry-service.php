@@ -768,7 +768,15 @@ function byda_iet_get_remote_enquiry_status_via_poller($enquiry_id, $settings = 
 		'enquiryId' => isset($status['enquiryId']) ? $status['enquiryId'] : $enquiry_id,
 		'externalId' => isset($status['externalId']) ? $status['externalId'] : (!empty($local_record['bydaExternalId']) ? $local_record['bydaExternalId'] : null),
 		'bydaStatus' => $byda_status,
-		'readyUrl' => $file_url ? $file_url : $share_url,
+		'readyUrl' => byda_iet_build_ready_url(
+			array(
+				'token' => $local_record ? $local_record['token'] : null,
+				'trackingToken' => $local_record ? $local_record['token'] : null,
+				'enquiryId' => isset($status['enquiryId']) ? $status['enquiryId'] : $enquiry_id,
+				'fileUrl' => $file_url,
+				'storageKey' => !empty($status['storageKey']) ? $status['storageKey'] : null,
+			)
+		),
 		'fileUrl' => $file_url,
 		'sourceFileUrl' => !empty($status['sourceFileUrl']) ? $status['sourceFileUrl'] : null,
 		'storageKey' => !empty($status['storageKey']) ? $status['storageKey'] : null,
@@ -877,11 +885,10 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 	}
 
 	$resolved_enquiry_id = $enquiry_id ? $enquiry_id : (!empty($local_record['bydaEnquiryId']) ? $local_record['bydaEnquiryId'] : null);
-	if (
-		$resolved_enquiry_id &&
+	$external_poller_enabled = $resolved_enquiry_id &&
 		function_exists('byda_iet_external_poller_proxy_is_enabled') &&
-		byda_iet_external_poller_proxy_is_enabled($settings)
-	) {
+		byda_iet_external_poller_proxy_is_enabled($settings);
+	if ($external_poller_enabled) {
 		$report = byda_iet_external_poller_get_enquiry_report($resolved_enquiry_id, $settings, is_array($local_record) ? $local_record : array());
 		if (!is_wp_error($report)) {
 			byda_iet_log(
@@ -901,7 +908,7 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 			$file_url = !empty($report['fileUrl']) ? $report['fileUrl'] : null;
 			$share_url = !empty($report['shareUrl']) ? $report['shareUrl'] : null;
 			$report_finalized = !empty($report['reportFinalized']);
-			$report_url = !empty($report['reportUrl']) ? $report['reportUrl'] : ($file_url ? $file_url : $share_url);
+			$report_url = !empty($report['reportUrl']) ? $report['reportUrl'] : $file_url;
 
 			if ($local_record && !empty($local_record['token'])) {
 				$updated = byda_iet_update_enquiry_record(
@@ -943,7 +950,7 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 
 			if ($report_url) {
 				byda_iet_log(
-					'Report URL resolution returning poller URL.',
+					'Report URL resolution returning poller file URL.',
 					array(
 						'token' => $token,
 						'enquiryId' => $resolved_enquiry_id,
@@ -953,6 +960,20 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 				);
 				return $report_url;
 			}
+
+			if ($share_url) {
+				byda_iet_log(
+					'Report URL resolution ignored poller share URL for browser download.',
+					array(
+						'token' => $token,
+						'enquiryId' => $resolved_enquiry_id,
+						'shareUrl' => byda_iet_debug_url_summary($share_url),
+					),
+					'debug'
+				);
+			}
+
+			return null;
 		} else {
 			byda_iet_log_wp_error(
 				'Report URL resolution poller report request failed.',
@@ -963,6 +984,35 @@ function byda_iet_get_enquiry_report_url($args = array(), $settings = null) {
 				)
 			);
 		}
+	}
+
+	if ($external_poller_enabled) {
+		if (!empty($local_record['fileUrl']) && !empty($local_record['storageKey'])) {
+			byda_iet_log(
+				'Report URL resolution returning stored file URL fallback after poller lookup.',
+				array(
+					'token' => $token,
+					'enquiryId' => $resolved_enquiry_id,
+					'fileUrl' => byda_iet_debug_url_summary($local_record['fileUrl']),
+					'storageKey' => $local_record['storageKey'],
+				),
+				'debug'
+			);
+			return $local_record['fileUrl'];
+		}
+
+		byda_iet_log(
+			'Report URL resolution stopped before BYDA share URL fallback.',
+			array(
+				'token' => $token,
+				'enquiryId' => $resolved_enquiry_id,
+				'hasShareUrl' => !empty($local_record['shareUrl']),
+				'hasFileUrl' => !empty($local_record['fileUrl']),
+				'hasStorageKey' => !empty($local_record['storageKey']),
+			),
+			'warning'
+		);
+		return null;
 	}
 
 	if (!$resolved_enquiry_id) {
@@ -1029,7 +1079,7 @@ function byda_iet_to_local_history_item($record) {
 		'enquiryId' => !empty($record['bydaEnquiryId']) ? $record['bydaEnquiryId'] : null,
 		'externalId' => !empty($record['bydaExternalId']) ? $record['bydaExternalId'] : null,
 		'bydaStatus' => !empty($record['bydaStatus']) ? $record['bydaStatus'] : null,
-		'readyUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : (!empty($record['shareUrl']) ? $record['shareUrl'] : null),
+		'readyUrl' => byda_iet_build_ready_url($record),
 		'fileUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : null,
 		'sourceFileUrl' => !empty($record['sourceFileUrl']) ? $record['sourceFileUrl'] : null,
 		'storageKey' => !empty($record['storageKey']) ? $record['storageKey'] : null,
@@ -1098,7 +1148,7 @@ function byda_iet_merge_history_item($local_record, $remote_record) {
 		'enquiryId' => !empty($remote_record['enquiryId']) ? $remote_record['enquiryId'] : (!empty($local_record['bydaEnquiryId']) ? $local_record['bydaEnquiryId'] : null),
 		'externalId' => !empty($remote_record['externalId']) ? $remote_record['externalId'] : (!empty($local_record['bydaExternalId']) ? $local_record['bydaExternalId'] : null),
 		'bydaStatus' => !empty($remote_record['bydaStatus']) ? $remote_record['bydaStatus'] : (!empty($local_record['bydaStatus']) ? $local_record['bydaStatus'] : null),
-		'readyUrl' => !empty($local_record['fileUrl']) ? $local_record['fileUrl'] : (!empty($local_record['shareUrl']) ? $local_record['shareUrl'] : null),
+		'readyUrl' => byda_iet_build_ready_url($local_record),
 		'fileUrl' => !empty($local_record['fileUrl']) ? $local_record['fileUrl'] : null,
 		'shareUrl' => !empty($local_record['shareUrl']) ? $local_record['shareUrl'] : null,
 		'site' => !empty($local_record['site']) ? $local_record['site'] : null,
@@ -1205,9 +1255,9 @@ function byda_iet_build_ready_url($record) {
 		return null;
 	}
 
-	$has_report_link = !empty($record['readyUrl']) || !empty($record['fileUrl']) || !empty($record['shareUrl']);
 	$remote_enquiry_id = !empty($record['enquiryId']) ? $record['enquiryId'] : (!empty($record['bydaEnquiryId']) ? $record['bydaEnquiryId'] : null);
-	if (!$has_report_link && !$remote_enquiry_id) {
+	$has_report_link = !empty($record['fileUrl']) || !empty($record['storageKey']) || !empty($remote_enquiry_id);
+	if (!$has_report_link) {
 		return null;
 	}
 
@@ -1258,7 +1308,7 @@ function byda_iet_to_status_payload($record) {
 				'trackingToken' => $record['token'],
 				'enquiryId' => !empty($record['bydaEnquiryId']) ? $record['bydaEnquiryId'] : null,
 				'fileUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : null,
-				'shareUrl' => !empty($record['shareUrl']) ? $record['shareUrl'] : null,
+				'storageKey' => !empty($record['storageKey']) ? $record['storageKey'] : null,
 			)
 		),
 		'fileUrl' => !empty($record['fileUrl']) ? $record['fileUrl'] : null,

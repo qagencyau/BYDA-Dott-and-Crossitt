@@ -200,7 +200,7 @@ function byda_iet_external_poller_get_enquiry_report($enquiry_id, $settings = nu
 		$pathname,
 		null,
 		$settings,
-		30
+		90
 	);
 }
 

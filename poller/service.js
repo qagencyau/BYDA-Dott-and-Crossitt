@@ -54,6 +54,8 @@ const config = {
 	bydaClientId: process.env.BYDA_CLIENT_ID || "",
 	bydaClientSecret: process.env.BYDA_CLIENT_SECRET || "",
 	requestTimeoutMs: envNumberWithFallback("REQUEST_TIMEOUT_MS", 20000),
+	reportWaitTimeoutMs: envNumberWithFallback("REPORT_WAIT_TIMEOUT_MS", 75000),
+	reportWaitIntervalMs: envNumberWithFallback("REPORT_WAIT_INTERVAL_MS", 5000),
 	spaces: {
 		enabled: envBool("SPACES_ENABLED", false),
 		endpoint: trimTrailingSlash(process.env.SPACES_ENDPOINT || ""),
@@ -211,6 +213,12 @@ function readJson(req) {
 			}
 		});
 		req.on("error", reject);
+	});
+}
+
+function sleep(ms) {
+	return new Promise((resolve) => {
+		setTimeout(resolve, Math.max(0, ms));
 	});
 }
 
@@ -537,6 +545,29 @@ async function resolveReportStorage(enquiryId, combinedFileId, sourceFileUrl, ex
 		},
 	});
 	if (!sourceFileUrl) {
+		if (config.spaces.enabled && existing.storageKey) {
+			const existingObject = await getSpacesObjectHead(existing.storageKey);
+			if (existingObject) {
+				const signed = await signSpacesReport(existing.storageKey);
+				log("Report storage resolution refreshed signed URL from existing Spaces key.", {
+					enquiryId,
+					combinedFileId: combinedFileId || null,
+					storageKey: existing.storageKey,
+					fileUrl: urlSummary(signed.url),
+					fileUrlExpiresAt: signed.expiresAt,
+					reportFinalized: existingFinalized,
+				});
+				return {
+					fileUrl: signed.url,
+					sourceFileUrl: existing.sourceFileUrl || "",
+					storageKey: existing.storageKey,
+					fileUrlExpiresAt: signed.expiresAt,
+					reportFinalized: existingFinalized,
+					reportFinalizedAt: existing.reportFinalizedAt || null,
+				};
+			}
+		}
+
 		log("Report storage resolution has no source file URL yet.", {
 			enquiryId,
 			combinedFileId: combinedFileId || null,
@@ -1115,7 +1146,7 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}, options = {}) {
 		fileUrlExpiresAt: reportStorage.fileUrlExpiresAt || null,
 		reportFinalized,
 		reportFinalizedAt: reportStorage.reportFinalizedAt || null,
-		readyUrl: fileUrl || shareUrl || null,
+		readyUrl: fileUrl || null,
 		combinedFileId: combinedFileId || null,
 		combinedJobId: combinedJobId || null,
 		detail,
@@ -1132,6 +1163,49 @@ async function bydaGetStatusSnapshot(enquiryId, existing = {}, options = {}) {
 	});
 
 	return snapshot;
+}
+
+async function bydaGetReportSnapshot(enquiryId, existing = {}) {
+	const timeoutMs = Math.max(0, config.reportWaitTimeoutMs);
+	const intervalMs = Math.max(1000, config.reportWaitIntervalMs);
+	const deadline = Date.now() + timeoutMs;
+	let state = existing;
+	let attempt = 0;
+	let snapshot = null;
+
+	do {
+		attempt += 1;
+		snapshot = await bydaGetStatusSnapshot(enquiryId, state, {
+			allowPartialReport: true,
+		});
+
+		if (snapshot.fileUrl) {
+			return snapshot;
+		}
+
+		state = {
+			...state,
+			...snapshot,
+		};
+
+		const remainingMs = deadline - Date.now();
+		if (remainingMs <= 0) {
+			return snapshot;
+		}
+
+		const waitMs = Math.min(intervalMs, remainingMs);
+		log("Report file not ready yet; waiting before retry.", {
+			enquiryId,
+			attempt,
+			waitMs,
+			remainingMs,
+			bydaStatus: snapshot.bydaStatus || null,
+			combinedFileId: snapshot.combinedFileId || null,
+			combinedJobId: snapshot.combinedJobId || null,
+			hasStorageKey: Boolean(snapshot.storageKey),
+		});
+		await sleep(waitMs);
+	} while (true);
 }
 
 function buildSnapshot(job, overrides = {}) {
@@ -1843,12 +1917,10 @@ const server = http.createServer(async (req, res) => {
 
 		try {
 			const enquiryId = decodeURIComponent(enquiryReportMatch[1]);
-			const status = await bydaGetStatusSnapshot(enquiryId, existingReportStateFromQuery(requestUrl.searchParams), {
-				allowPartialReport: true,
-			});
+			const status = await bydaGetReportSnapshot(enquiryId, existingReportStateFromQuery(requestUrl.searchParams));
 			return jsonResponse(res, 200, {
 				enquiryId: status.enquiryId,
-				reportUrl: status.fileUrl || status.shareUrl || null,
+				reportUrl: status.fileUrl || null,
 				fileUrl: status.fileUrl || null,
 				sourceFileUrl: status.sourceFileUrl || null,
 				storageKey: status.storageKey || null,

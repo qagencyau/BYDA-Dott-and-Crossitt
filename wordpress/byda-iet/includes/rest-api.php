@@ -367,6 +367,61 @@ function byda_iet_rest_get_remote_enquiry_status(WP_REST_Request $request) {
 	return rest_ensure_response(byda_iet_to_history_payload($status));
 }
 
+function byda_iet_rest_report_pending(WP_REST_Request $request, $context = array()) {
+	$retry_after = 5;
+	$route = ltrim((string) $request->get_route(), '/');
+	$retry_url = add_query_arg('byda_iet_retry', (string) time(), rest_url($route));
+
+	byda_iet_log(
+		'REST report pending response returned.',
+		array_merge(
+			array(
+				'route' => $request->get_route(),
+				'retryUrl' => byda_iet_debug_url_summary($retry_url),
+				'retryAfterSeconds' => $retry_after,
+			),
+			is_array($context) ? $context : array()
+		),
+		'debug'
+	);
+
+	status_header(202);
+	nocache_headers();
+	header('Content-Type: text/html; charset=' . get_option('blog_charset'));
+	header('Retry-After: ' . $retry_after);
+	header('Refresh: ' . $retry_after . '; url=' . $retry_url);
+
+	?>
+	<!doctype html>
+	<html <?php language_attributes(); ?>>
+	<head>
+		<meta charset="<?php echo esc_attr(get_option('blog_charset')); ?>">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta http-equiv="refresh" content="<?php echo esc_attr((string) $retry_after); ?>;url=<?php echo esc_url($retry_url); ?>">
+		<title><?php echo esc_html__('Preparing report', 'byda-iet'); ?></title>
+		<style>
+			body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f4ef;color:#18261f;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+			main{max-width:520px;padding:32px;line-height:1.6}
+			h1{margin:0 0 12px;font-size:1.5rem;line-height:1.2}
+			p{margin:0;color:#56655d}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1><?php echo esc_html__('Preparing report', 'byda-iet'); ?></h1>
+			<p><?php echo esc_html__('The report is being generated and stored. This page will download it automatically when the partial report first arrives.', 'byda-iet'); ?></p>
+		</main>
+		<script>
+			setTimeout(function () {
+				window.location.replace(<?php echo wp_json_encode($retry_url); ?>);
+			}, <?php echo (int) $retry_after * 1000; ?>);
+		</script>
+	</body>
+	</html>
+	<?php
+	exit;
+}
+
 function byda_iet_rest_enquiry_report(WP_REST_Request $request) {
 	$token = (string) $request->get_param('token');
 	byda_iet_log(
@@ -388,7 +443,7 @@ function byda_iet_rest_enquiry_report(WP_REST_Request $request) {
 			),
 			'warning'
 		);
-		return new WP_Error('byda_iet_not_found', 'Report is not available for this enquiry yet.', array('status' => 404));
+		return byda_iet_rest_report_pending($request, array('token' => $token));
 	}
 
 	byda_iet_log(
@@ -412,7 +467,7 @@ function byda_iet_rest_remote_enquiry_report(WP_REST_Request $request) {
 
 	$report_url = byda_iet_get_enquiry_report_url(array('enquiryId' => $enquiry_id));
 	if (!$report_url) {
-		return new WP_Error('byda_iet_not_found', 'Report is not available for this enquiry yet.', array('status' => 404));
+		return byda_iet_rest_report_pending($request, array('enquiryId' => $enquiry_id));
 	}
 
 	wp_redirect($report_url, 302, 'BYDA IET');

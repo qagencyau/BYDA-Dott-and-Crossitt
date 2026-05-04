@@ -261,8 +261,9 @@ var BydaComponents = (() => {
     .history-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
     .history-meta-item{padding:12px 14px;background:rgba(255,255,255,.72)}
     .history-status{display:inline-flex;align-items:center;min-height:32px;padding:6px 10px;border-radius:999px;background:rgba(24,38,31,.08);color:var(--ink);font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
-    .history-status[data-status="ready"]{background:rgba(45,141,98,.14);color:var(--successInk)}
-    .history-status[data-status="processing"]{background:rgba(196,139,31,.16);color:#7a540a}
+    .history-status[data-status="ready"],.history-status[data-status="completed"],.history-status[data-status="complete"],.history-status[data-status="all_received"]{background:rgba(45,141,98,.18);color:var(--successInk)}
+    .history-status[data-status="processing"],.history-status[data-status="pending"],.history-status[data-status="waiting"],.history-status[data-status="polling"],.history-status[data-status="started"],.history-status[data-status="starting"]{background:rgba(196,139,31,.22);color:#7a540a}
+    .history-status[data-status="failed"],.history-status[data-status="error"],.history-status[data-status="rejected"],.history-status[data-status="cancelled"],.history-status[data-status="expired"]{background:rgba(194,82,74,.2);color:#7f241d}
     .history-status[data-status="historical"]{background:rgba(61,122,142,.14);color:#214554}
     .status-media{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:76px;border-radius:22px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));color:#fff;font-size:1rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
     .tracking-status-list{gap:12px}
@@ -1657,6 +1658,10 @@ var BydaComponents = (() => {
       --byda-card-accent: #bb5c2d;
       --byda-card-accent-strong: #7d3213;
       --byda-card-accent-soft: rgba(187, 92, 45, 0.14);
+      --byda-card-tone-bg: rgba(187, 92, 45, 0.1);
+      --byda-card-tone-bg-strong: rgba(187, 92, 45, 0.22);
+      --byda-card-tone-border: rgba(187, 92, 45, 0.34);
+      --byda-card-tone-shadow: rgba(187, 92, 45, 0.18);
       --byda-card-radius: 28px;
       --byda-card-padding: 28px;
       display: block;
@@ -1671,12 +1676,15 @@ var BydaComponents = (() => {
     .card {
       position: relative;
       overflow: hidden;
-      border: 1px solid var(--byda-card-line);
+      border: 1px solid var(--byda-card-tone-border);
       border-radius: var(--byda-card-radius);
       background:
-        linear-gradient(155deg, rgba(255, 255, 255, 0.96), rgba(247, 240, 231, 0.88)),
-        linear-gradient(120deg, var(--byda-card-accent-soft), transparent 55%);
-      box-shadow: var(--byda-card-shadow);
+        linear-gradient(135deg, var(--byda-card-tone-bg-strong) 0%, var(--byda-card-tone-bg) 44%, rgba(255, 255, 255, 0.94) 100%),
+        linear-gradient(155deg, rgba(255, 255, 255, 0.9), rgba(247, 240, 231, 0.82));
+      box-shadow:
+        inset 8px 0 0 var(--byda-card-accent),
+        0 26px 72px var(--byda-card-tone-shadow),
+        var(--byda-card-shadow);
       isolation: isolate;
     }
 
@@ -1863,30 +1871,50 @@ var BydaComponents = (() => {
       --byda-card-accent: #bb5c2d;
       --byda-card-accent-strong: #7d3213;
       --byda-card-accent-soft: rgba(187, 92, 45, 0.14);
+      --byda-card-tone-bg: rgba(187, 92, 45, 0.1);
+      --byda-card-tone-bg-strong: rgba(187, 92, 45, 0.22);
+      --byda-card-tone-border: rgba(187, 92, 45, 0.34);
+      --byda-card-tone-shadow: rgba(187, 92, 45, 0.18);
     }
 
     :host([tone="success"]) {
       --byda-card-accent: #2d8d62;
       --byda-card-accent-strong: #165138;
       --byda-card-accent-soft: rgba(45, 141, 98, 0.14);
+      --byda-card-tone-bg: rgba(45, 141, 98, 0.1);
+      --byda-card-tone-bg-strong: rgba(45, 141, 98, 0.24);
+      --byda-card-tone-border: rgba(45, 141, 98, 0.34);
+      --byda-card-tone-shadow: rgba(45, 141, 98, 0.18);
     }
 
     :host([tone="warning"]) {
       --byda-card-accent: #c48b1f;
       --byda-card-accent-strong: #7a540a;
       --byda-card-accent-soft: rgba(196, 139, 31, 0.16);
+      --byda-card-tone-bg: rgba(196, 139, 31, 0.12);
+      --byda-card-tone-bg-strong: rgba(196, 139, 31, 0.3);
+      --byda-card-tone-border: rgba(196, 139, 31, 0.44);
+      --byda-card-tone-shadow: rgba(196, 139, 31, 0.24);
     }
 
     :host([tone="critical"]) {
       --byda-card-accent: #c2524a;
       --byda-card-accent-strong: #7f241d;
       --byda-card-accent-soft: rgba(194, 82, 74, 0.16);
+      --byda-card-tone-bg: rgba(194, 82, 74, 0.12);
+      --byda-card-tone-bg-strong: rgba(194, 82, 74, 0.3);
+      --byda-card-tone-border: rgba(194, 82, 74, 0.44);
+      --byda-card-tone-shadow: rgba(194, 82, 74, 0.24);
     }
 
     :host([tone="neutral"]) {
       --byda-card-accent: #3d7a8e;
       --byda-card-accent-strong: #214554;
       --byda-card-accent-soft: rgba(61, 122, 142, 0.14);
+      --byda-card-tone-bg: rgba(61, 122, 142, 0.1);
+      --byda-card-tone-bg-strong: rgba(61, 122, 142, 0.24);
+      --byda-card-tone-border: rgba(61, 122, 142, 0.34);
+      --byda-card-tone-shadow: rgba(61, 122, 142, 0.18);
     }
 
     @media (max-width: 720px) {

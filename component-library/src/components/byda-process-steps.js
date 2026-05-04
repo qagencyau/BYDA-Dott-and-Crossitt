@@ -232,8 +232,9 @@ template.innerHTML = `
     .history-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
     .history-meta-item{padding:12px 14px;background:rgba(255,255,255,.72)}
     .history-status{display:inline-flex;align-items:center;min-height:32px;padding:6px 10px;border-radius:999px;background:rgba(24,38,31,.08);color:var(--ink);font-size:.76rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
-    .history-status[data-status="ready"]{background:rgba(45,141,98,.14);color:var(--successInk)}
-    .history-status[data-status="processing"]{background:rgba(196,139,31,.16);color:#7a540a}
+    .history-status[data-status="ready"],.history-status[data-status="completed"],.history-status[data-status="complete"],.history-status[data-status="all_received"]{background:rgba(45,141,98,.18);color:var(--successInk)}
+    .history-status[data-status="processing"],.history-status[data-status="pending"],.history-status[data-status="waiting"],.history-status[data-status="polling"],.history-status[data-status="started"],.history-status[data-status="starting"]{background:rgba(196,139,31,.22);color:#7a540a}
+    .history-status[data-status="failed"],.history-status[data-status="error"],.history-status[data-status="rejected"],.history-status[data-status="cancelled"],.history-status[data-status="expired"]{background:rgba(194,82,74,.2);color:#7f241d}
     .history-status[data-status="historical"]{background:rgba(61,122,142,.14);color:#214554}
     .status-media{display:inline-flex;align-items:center;justify-content:center;min-width:76px;min-height:76px;border-radius:22px;background:linear-gradient(135deg,var(--accent),var(--accentStrong));color:#fff;font-size:1rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
     .tracking-status-list{gap:12px}

@@ -482,6 +482,14 @@ function buildBydaPayload(input, site) {
   const locationsInRoad = input.locationTypes.includes("Road Reserve")
     ? input.locationsInRoad
     : [];
+  const addressLine1 = [
+    input.address.propertyName,
+    input.address.streetNumber,
+    input.address.streetName,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 
   return {
     userReference: input.userReference || undefined,
@@ -498,7 +506,7 @@ function buildBydaPayload(input, site) {
     source: "API",
     isSandboxTest: input.isSandboxTest || undefined,
     Address: {
-      line1: `${input.address.streetNumber} ${input.address.streetName}`.trim(),
+      line1: addressLine1,
       line2: null,
       locality: input.address.suburb,
       state: input.address.state,
@@ -742,7 +750,13 @@ function normalizeBydaAddress(address) {
   }
 
   const line1 = String(address.line1 ?? "").trim();
-  const match = line1.match(/^([0-9A-Z/-]+)\s+(.+)$/i);
+  let match = line1.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+  if (!match) {
+    const embeddedMatch = line1.match(/\b([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+    if (embeddedMatch && normalizeStreetName(embeddedMatch[2]).split(" ").length > 1) {
+      match = embeddedMatch;
+    }
+  }
 
   return {
     streetNumber: normalizeStreetNumber(match?.[1] ?? ""),

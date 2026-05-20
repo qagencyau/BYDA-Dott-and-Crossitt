@@ -121,6 +121,7 @@ function byda_iet_rest_options() {
 function byda_iet_rest_search_addresses(WP_REST_Request $request) {
 	$address = byda_iet_validate_address(
 		array(
+			'propertyName' => $request->get_param('propertyName'),
 			'streetNumber' => $request->get_param('streetNumber'),
 			'streetName' => $request->get_param('streetName'),
 			'suburb' => $request->get_param('suburb'),
@@ -144,6 +145,7 @@ function byda_iet_rest_search_addresses(WP_REST_Request $request) {
 function byda_iet_rest_enquiries_by_address(WP_REST_Request $request) {
 	$address = byda_iet_validate_address(
 		array(
+			'propertyName' => $request->get_param('propertyName'),
 			'streetNumber' => $request->get_param('streetNumber'),
 			'streetName' => $request->get_param('streetName'),
 			'suburb' => $request->get_param('suburb'),
@@ -501,6 +503,7 @@ function byda_iet_validate_address($address) {
 	}
 
 	$street_number = trim((string) (isset($address['streetNumber']) ? $address['streetNumber'] : ''));
+	$property_name = byda_iet_normalize_whitespace((string) (isset($address['propertyName']) ? $address['propertyName'] : ''));
 	$street_name = trim((string) (isset($address['streetName']) ? $address['streetName'] : ''));
 	$suburb = trim((string) (isset($address['suburb']) ? $address['suburb'] : ''));
 	$state = strtoupper(trim((string) (isset($address['state']) ? $address['state'] : '')));
@@ -508,6 +511,9 @@ function byda_iet_validate_address($address) {
 
 	if ('' === $street_number || strlen($street_number) > 20) {
 		return byda_iet_bad_request('streetNumber is required and must be 20 characters or fewer.');
+	}
+	if (strlen($property_name) > 80) {
+		return byda_iet_bad_request('propertyName must be 80 characters or fewer.');
 	}
 	$street_name = byda_iet_strip_leading_street_number($street_name, $street_number);
 	if (strlen($street_name) < 2 || strlen($street_name) > 100) {
@@ -524,6 +530,7 @@ function byda_iet_validate_address($address) {
 	}
 
 	return array(
+		'propertyName' => $property_name,
 		'streetNumber' => $street_number,
 		'streetName' => $street_name,
 		'suburb' => $suburb,

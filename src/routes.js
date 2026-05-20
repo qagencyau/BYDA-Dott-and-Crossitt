@@ -5,6 +5,7 @@ import { HttpError } from "./lib/http.js";
 import { SUPPORTED_STATES } from "./types.js";
 
 const addressSchema = z.object({
+  propertyName: z.string().trim().max(80).optional().default(""),
   streetNumber: z.string().trim().min(1).max(20),
   streetName: z.string().trim().min(2).max(100),
   suburb: z.string().trim().min(2).max(80),

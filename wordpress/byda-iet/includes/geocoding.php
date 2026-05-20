@@ -11,6 +11,25 @@ function byda_iet_search_addresses($address, $settings = null) {
 	$settings = is_array($settings) ? $settings : byda_iet_get_settings();
 	$state = isset($address['state']) ? strtoupper((string) $address['state']) : '';
 
+	if (
+		function_exists('byda_iet_external_poller_proxy_is_enabled') &&
+		byda_iet_external_poller_proxy_is_enabled($settings) &&
+		function_exists('byda_iet_external_poller_search_addresses')
+	) {
+		$remote_sites = byda_iet_external_poller_search_addresses($address, $settings);
+		if (!is_wp_error($remote_sites) && is_array($remote_sites)) {
+			return array_slice($remote_sites, 0, max(1, (int) $settings['max_address_candidates']));
+		}
+		byda_iet_log_wp_error(
+			'External poller address search failed; falling back to local geocoding.',
+			$remote_sites,
+			array(
+				'state' => $state,
+				'address' => $address,
+			)
+		);
+	}
+
 	switch ($state) {
 		case 'NSW':
 			$sites = byda_iet_search_nsw_addresses($address, $settings);
@@ -182,12 +201,18 @@ function byda_iet_search_qld_addresses($address, $settings = null) {
 	if (!empty($street['roadType'])) {
 		$clauses[] = "street_type = '" . byda_iet_escape_sql_literal(byda_iet_normalize_title($street['roadType'])) . "'";
 	}
+	if (!empty($street['roadSuffix'])) {
+		$clauses[] = "street_suffix = '" . byda_iet_escape_sql_literal(byda_iet_normalize_title($street['roadSuffix'])) . "'";
+	}
+	if (!empty($address['propertyName'])) {
+		$clauses[] = "property_name = '" . byda_iet_escape_sql_literal(byda_iet_normalize_title($address['propertyName'])) . "'";
+	}
 
 	$url = byda_iet_build_url(
 		'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/0/query',
 		array(
 			'where' => implode(' and ', $clauses),
-			'outFields' => 'address,lotplan,latitude,longitude',
+			'outFields' => 'address,property_name,lotplan,latitude,longitude',
 			'returnGeometry' => 'true',
 			'outSR' => 4326,
 			'resultRecordCount' => 10,
@@ -212,9 +237,15 @@ function byda_iet_search_qld_addresses($address, $settings = null) {
 			'lat' => (float) $feature['geometry']['y'],
 			'lng' => (float) $feature['geometry']['x'],
 		);
+		$label = isset($feature['attributes']['address']) ? $feature['attributes']['address'] : '';
+		$property_name = isset($feature['attributes']['property_name']) ? trim((string) $feature['attributes']['property_name']) : '';
+		if ('' !== $property_name && false === stripos($label, $property_name)) {
+			$label = trim($property_name . ' ' . $label);
+		}
+
 		$sites[] = array(
 			'id' => 'qld:' . (isset($feature['attributes']['lotplan']) ? $feature['attributes']['lotplan'] : wp_generate_uuid4()),
-			'label' => isset($feature['attributes']['address']) ? $feature['attributes']['address'] : '',
+			'label' => $label,
 			'state' => 'QLD',
 			'address' => $address,
 			'point' => $point,
@@ -222,6 +253,7 @@ function byda_iet_search_qld_addresses($address, $settings = null) {
 			'source' => 'QLD Addresses',
 			'metadata' => array(
 				'lotplan' => isset($feature['attributes']['lotplan']) ? $feature['attributes']['lotplan'] : null,
+				'propertyName' => $property_name,
 			),
 		);
 	}

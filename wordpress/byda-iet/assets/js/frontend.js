@@ -396,6 +396,7 @@
     const streetNumber = explicitStreetNumber || streetLine.streetNumber || String(fallback.streetNumber || "").trim();
 
     return {
+      propertyName: firstNonEmpty(combined.propertyName, streetLine.propertyName, fallback.propertyName),
       streetNumber,
       streetName: streetNumber === streetLine.streetNumber ? streetLine.streetName : streetLine.original,
       suburb: resolveAddressPart(sources.suburb, combined.suburb, fallback.suburb),
@@ -472,11 +473,12 @@
       }
     }
 
-    const streetMatch = streetLine.match(/^([0-9A-Z/-]+)\s+(.+)$/i);
+    const parsedStreetLine = parseStreetLine(streetLine);
 
     return {
-      streetNumber: streetMatch ? streetMatch[1].trim() : "",
-      streetName: streetMatch ? streetMatch[2].trim() : streetLine.trim(),
+      propertyName: parsedStreetLine.propertyName,
+      streetNumber: parsedStreetLine.streetNumber,
+      streetName: parsedStreetLine.streetName,
       suburb,
       state,
       postcode,
@@ -498,12 +500,27 @@
 
   function parseStreetLine(value) {
     const original = String(value || "").replace(/\s+/g, " ").trim();
-    const match = original.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+    const leadingMatch = original.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+    const streetTypePattern = /\b(ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b/i;
+    let embeddedMatch = null;
+
+    for (const match of original.matchAll(/\b([0-9]+[0-9A-Z/-]*)\b/g)) {
+      const streetName = original.slice(match.index + match[0].length).trim();
+      if (streetName && streetTypePattern.test(streetName)) {
+        const propertyName = original.slice(0, match.index).trim();
+        embeddedMatch = {
+          propertyName,
+          streetNumber: match[1].trim(),
+          streetName,
+        };
+      }
+    }
 
     return {
       original,
-      streetNumber: match ? match[1].trim() : "",
-      streetName: match ? match[2].trim() : original,
+      propertyName: leadingMatch ? "" : embeddedMatch?.propertyName || "",
+      streetNumber: leadingMatch ? leadingMatch[1].trim() : embeddedMatch?.streetNumber || "",
+      streetName: leadingMatch ? leadingMatch[2].trim() : embeddedMatch?.streetName || original,
     };
   }
 
@@ -619,6 +636,7 @@
     return JSON.stringify({
       streetNumber: String(address.streetNumber || "").trim().toUpperCase(),
       streetName: String(address.streetName || "").trim().toUpperCase(),
+      propertyName: String(address.propertyName || "").trim().toUpperCase(),
       suburb: String(address.suburb || "").trim().toUpperCase(),
       state: normalizeState(address.state),
       postcode: String(address.postcode || "").replace(/\D/g, "").slice(0, 4),

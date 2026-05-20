@@ -54,6 +54,7 @@ const config = {
 	bydaClientId: process.env.BYDA_CLIENT_ID || "",
 	bydaClientSecret: process.env.BYDA_CLIENT_SECRET || "",
 	requestTimeoutMs: envNumberWithFallback("REQUEST_TIMEOUT_MS", 20000),
+	addressBufferMeters: envNumberWithFallback("ADDRESS_BUFFER_METERS", 10),
 	reportWaitTimeoutMs: envNumberWithFallback("REPORT_WAIT_TIMEOUT_MS", 75000),
 	reportWaitIntervalMs: envNumberWithFallback("REPORT_WAIT_INTERVAL_MS", 5000),
 	spaces: {
@@ -261,6 +262,277 @@ function buildUrl(baseUrl, params = {}) {
 	}
 
 	return url.toString();
+}
+
+const QLD_ADDRESS_QUERY_URL =
+	"https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/0/query";
+
+const ADDRESS_STREET_TYPE_ALIASES = new Map([
+	["ST", "STREET"],
+	["STREET", "STREET"],
+	["RD", "ROAD"],
+	["ROAD", "ROAD"],
+	["AVE", "AVENUE"],
+	["AVENUE", "AVENUE"],
+	["BLVD", "BOULEVARD"],
+	["BOULEVARD", "BOULEVARD"],
+	["DR", "DRIVE"],
+	["DRIVE", "DRIVE"],
+	["CT", "COURT"],
+	["COURT", "COURT"],
+	["PL", "PLACE"],
+	["PLACE", "PLACE"],
+	["HWY", "HIGHWAY"],
+	["HIGHWAY", "HIGHWAY"],
+	["PDE", "PARADE"],
+	["PARADE", "PARADE"],
+	["TCE", "TERRACE"],
+	["TERRACE", "TERRACE"],
+	["CRES", "CRESCENT"],
+	["CRESCENT", "CRESCENT"],
+	["WAY", "WAY"],
+	["LN", "LANE"],
+	["LANE", "LANE"],
+]);
+
+const ADDRESS_STREET_SUFFIX_ALIASES = new Map([
+	["E", "EAST"],
+	["EAST", "EAST"],
+	["N", "NORTH"],
+	["NORTH", "NORTH"],
+	["S", "SOUTH"],
+	["SOUTH", "SOUTH"],
+	["W", "WEST"],
+	["WEST", "WEST"],
+]);
+
+function normalizeAddressWhitespace(value) {
+	return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeAddressUpper(value) {
+	return normalizeAddressWhitespace(value).toUpperCase();
+}
+
+function normalizeAddressTitle(value) {
+	return normalizeAddressWhitespace(value)
+		.toLowerCase()
+		.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function escapeSqlLiteral(value) {
+	return String(value || "").replace(/'/g, "''");
+}
+
+function parseAddressStreetInput(value) {
+	const normalized = normalizeAddressUpper(value);
+	const parts = normalized ? normalized.split(" ") : [];
+	const lastPart = parts[parts.length - 1] || "";
+	let roadType = ADDRESS_STREET_TYPE_ALIASES.get(lastPart);
+	let roadSuffix = null;
+
+	if (!roadType && parts.length >= 2 && ADDRESS_STREET_SUFFIX_ALIASES.has(lastPart)) {
+		const maybeType = parts[parts.length - 2];
+		roadType = ADDRESS_STREET_TYPE_ALIASES.get(maybeType);
+		if (roadType) {
+			roadSuffix = ADDRESS_STREET_SUFFIX_ALIASES.get(lastPart);
+			parts.pop();
+		}
+	}
+
+	if (!roadType) {
+		return {
+			raw: String(value || ""),
+			normalized,
+			roadName: normalized,
+		};
+	}
+
+	return {
+		raw: String(value || ""),
+		normalized,
+		roadName: parts.slice(0, -1).join(" "),
+		roadType,
+		roadSuffix,
+	};
+}
+
+function createAddressSearchError(message, status = 400) {
+	const error = new Error(message);
+	error.status = status;
+	return error;
+}
+
+function parseAddressSearchParams(searchParams) {
+	const address = {
+		propertyName: normalizeAddressWhitespace(searchParams.get("propertyName") || ""),
+		streetNumber: normalizeAddressWhitespace(searchParams.get("streetNumber") || ""),
+		streetName: normalizeAddressWhitespace(searchParams.get("streetName") || ""),
+		suburb: normalizeAddressWhitespace(searchParams.get("suburb") || ""),
+		state: normalizeAddressUpper(searchParams.get("state") || ""),
+		postcode: String(searchParams.get("postcode") || "").replace(/\D/g, "").slice(0, 4),
+	};
+
+	if (!address.streetNumber || address.streetNumber.length > 20) {
+		throw createAddressSearchError("streetNumber is required and must be 20 characters or fewer.");
+	}
+	if (address.propertyName.length > 80) {
+		throw createAddressSearchError("propertyName must be 80 characters or fewer.");
+	}
+	if (address.streetName.length < 2 || address.streetName.length > 100) {
+		throw createAddressSearchError("streetName is required and must be between 2 and 100 characters.");
+	}
+	if (address.suburb.length < 2 || address.suburb.length > 80) {
+		throw createAddressSearchError("suburb is required and must be between 2 and 80 characters.");
+	}
+	if (!["NSW", "QLD", "VIC"].includes(address.state)) {
+		throw createAddressSearchError("state must be NSW, QLD, or VIC.");
+	}
+	if (!/^\d{4}$/.test(address.postcode)) {
+		throw createAddressSearchError("postcode must be exactly 4 digits.");
+	}
+
+	return address;
+}
+
+function addressPointToBufferedSquare(point, bufferMeters) {
+	const meters = Math.max(1, Number(bufferMeters || 10));
+	const latDelta = meters / 111320;
+	const lngDelta = meters / (111320 * Math.cos(point.lat * Math.PI / 180));
+	const ring = [
+		[point.lng - lngDelta, point.lat - latDelta],
+		[point.lng + lngDelta, point.lat - latDelta],
+		[point.lng + lngDelta, point.lat + latDelta],
+		[point.lng - lngDelta, point.lat + latDelta],
+		[point.lng - lngDelta, point.lat - latDelta],
+	];
+	const lngs = ring.map((coordinate) => coordinate[0]);
+	const lats = ring.map((coordinate) => coordinate[1]);
+
+	return {
+		type: "Polygon",
+		coordinates: [ring],
+		bbox: [
+			Math.min(...lngs),
+			Math.min(...lats),
+			Math.max(...lngs),
+			Math.max(...lats),
+		],
+	};
+}
+
+function normalizeAddressForComparison(value) {
+	return normalizeAddressUpper(value).replace(/[^A-Z0-9 ]/g, "");
+}
+
+function rankAddressCandidate(input, label) {
+	const normalizedLabel = normalizeAddressForComparison(label);
+	const normalizedStreetName = normalizeAddressForComparison(input.streetName);
+	const normalizedSuburb = normalizeAddressForComparison(input.suburb);
+	const streetNumber = normalizeAddressForComparison(input.streetNumber);
+	const postcode = String(input.postcode || "");
+	let score = 0;
+
+	if (streetNumber && normalizedLabel.includes(streetNumber)) score += 3;
+	if (input.propertyName && normalizedLabel.includes(normalizeAddressForComparison(input.propertyName))) score += 3;
+	if (normalizedStreetName && normalizedLabel.includes(normalizedStreetName)) score += 4;
+	if (normalizedSuburb && normalizedLabel.includes(normalizedSuburb)) score += 3;
+	if (postcode && normalizedLabel.includes(postcode)) score += 2;
+	if (streetNumber && normalizedStreetName && normalizedLabel.startsWith(`${streetNumber} ${normalizedStreetName}`)) score += 5;
+
+	return score;
+}
+
+function dedupeAddressSites(sites) {
+	const seen = new Set();
+	const deduped = [];
+
+	for (const site of sites) {
+		const key = `${site.label}|${Number(site.point && site.point.lat || 0).toFixed(6)}|${Number(site.point && site.point.lng || 0).toFixed(6)}`;
+		if (seen.has(key)) {
+			continue;
+		}
+
+		seen.add(key);
+		deduped.push(site);
+	}
+
+	return deduped;
+}
+
+async function searchQldAddresses(address) {
+	const street = parseAddressStreetInput(address.streetName);
+	const clauses = [
+		`street_number = '${escapeSqlLiteral(address.streetNumber)}'`,
+		`street_name = '${escapeSqlLiteral(normalizeAddressTitle(street.roadName))}'`,
+		`locality = '${escapeSqlLiteral(normalizeAddressTitle(address.suburb))}'`,
+	];
+
+	if (street.roadType) {
+		clauses.push(`street_type = '${escapeSqlLiteral(normalizeAddressTitle(street.roadType))}'`);
+	}
+	if (street.roadSuffix) {
+		clauses.push(`street_suffix = '${escapeSqlLiteral(normalizeAddressTitle(street.roadSuffix))}'`);
+	}
+	if (address.propertyName) {
+		clauses.push(`property_name = '${escapeSqlLiteral(normalizeAddressTitle(address.propertyName))}'`);
+	}
+
+	const response = await requestJson("GET", buildUrl(QLD_ADDRESS_QUERY_URL, {
+		where: clauses.join(" and "),
+		outFields: "address,property_name,lotplan,latitude,longitude",
+		returnGeometry: true,
+		outSR: 4326,
+		resultRecordCount: 10,
+		f: "json",
+	}));
+
+	const features = response && typeof response === "object" && Array.isArray(response.features)
+		? response.features
+		: [];
+	const sites = features.flatMap((feature) => {
+		if (!feature || !feature.geometry) {
+			return [];
+		}
+
+		const point = {
+			lat: Number(feature.geometry.y),
+			lng: Number(feature.geometry.x),
+		};
+		const attributes = feature.attributes && typeof feature.attributes === "object" ? feature.attributes : {};
+		const propertyName = normalizeAddressWhitespace(attributes.property_name || "");
+		const rawLabel = normalizeAddressWhitespace(attributes.address || "");
+		const label = propertyName && !rawLabel.toLowerCase().includes(propertyName.toLowerCase())
+			? `${propertyName} ${rawLabel}`.trim()
+			: rawLabel;
+
+		return [{
+			id: `qld:${attributes.lotplan || crypto.randomUUID()}`,
+			label,
+			state: "QLD",
+			address,
+			point,
+			polygon: addressPointToBufferedSquare(point, config.addressBufferMeters),
+			source: "QLD Addresses",
+			metadata: {
+				lotplan: attributes.lotplan || null,
+				propertyName,
+			},
+		}];
+	});
+
+	return dedupeAddressSites(sites).sort(
+		(left, right) => rankAddressCandidate(address, right.label) - rankAddressCandidate(address, left.label),
+	);
+}
+
+async function searchAddresses(address) {
+	switch (address.state) {
+		case "QLD":
+			return searchQldAddresses(address);
+		default:
+			throw createAddressSearchError(`Address search for ${address.state} is not available through the poller yet.`, 501);
+	}
 }
 
 async function requestJson(method, url, options = {}) {
@@ -1864,6 +2136,26 @@ const server = http.createServer(async (req, res) => {
 			return jsonResponse(res, 200, await bydaGetOptionsPayload());
 		} catch (error) {
 			log("Options proxy error.", errorLogMeta(error));
+			return jsonError(res, errorStatus(error), error);
+		}
+	}
+
+	if (method === "GET" && pathname === "/addresses/search") {
+		const secret = getSecret(req);
+		if (!isAuthorized(secret)) {
+			return jsonResponse(res, 401, { error: "Unauthorized" });
+		}
+
+		try {
+			const address = parseAddressSearchParams(requestUrl.searchParams);
+			const sites = await searchAddresses(address);
+			return jsonResponse(res, 200, { sites });
+		} catch (error) {
+			log("Address search proxy error.", errorLogMeta(error, {
+				pathname,
+				state: requestUrl.searchParams.get("state") || "",
+				postcode: requestUrl.searchParams.get("postcode") || "",
+			}));
 			return jsonError(res, errorStatus(error), error);
 		}
 	}

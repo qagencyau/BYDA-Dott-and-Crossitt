@@ -27,6 +27,16 @@ const STREET_TYPE_ALIASES = new Map([
   ["LN", "LANE"],
   ["LANE", "LANE"],
 ]);
+const STREET_SUFFIX_ALIASES = new Map([
+  ["E", "EAST"],
+  ["EAST", "EAST"],
+  ["N", "NORTH"],
+  ["NORTH", "NORTH"],
+  ["S", "SOUTH"],
+  ["SOUTH", "SOUTH"],
+  ["W", "WEST"],
+  ["WEST", "WEST"],
+]);
 
 function normalizeWhitespace(value) {
   return value.trim().replace(/\s+/g, " ");
@@ -50,7 +60,17 @@ export function parseStreetInput(value) {
   const normalized = normalizeUpper(value);
   const parts = normalized.split(" ");
   const lastPart = parts[parts.length - 1];
-  const roadType = STREET_TYPE_ALIASES.get(lastPart);
+  let roadType = STREET_TYPE_ALIASES.get(lastPart);
+  let roadSuffix = null;
+
+  if (!roadType && parts.length >= 2 && STREET_SUFFIX_ALIASES.has(lastPart)) {
+    const maybeType = parts[parts.length - 2];
+    roadType = STREET_TYPE_ALIASES.get(maybeType);
+    if (roadType) {
+      roadSuffix = STREET_SUFFIX_ALIASES.get(lastPart);
+      parts.pop();
+    }
+  }
 
   if (!roadType) {
     return {
@@ -65,6 +85,7 @@ export function parseStreetInput(value) {
     normalized,
     roadName: parts.slice(0, -1).join(" "),
     roadType,
+    roadSuffix,
   };
 }
 

@@ -29,11 +29,17 @@ export class QldGeocoder {
     if (street.roadType) {
       clauses.push(`street_type = '${escapeSqlLiteral(normalizeTitle(street.roadType))}'`);
     }
+    if (street.roadSuffix) {
+      clauses.push(`street_suffix = '${escapeSqlLiteral(normalizeTitle(street.roadSuffix))}'`);
+    }
+    if (address.propertyName) {
+      clauses.push(`property_name = '${escapeSqlLiteral(normalizeTitle(address.propertyName))}'`);
+    }
 
     const response = await fetchJson(
       buildUrl(QLD_ADDRESS_QUERY_URL, {
         where: clauses.join(" and "),
-        outFields: "address,lotplan,latitude,longitude",
+        outFields: "address,property_name,lotplan,latitude,longitude",
         returnGeometry: true,
         outSR: 4326,
         resultRecordCount: 10,
@@ -51,10 +57,14 @@ export class QldGeocoder {
           lat: feature.geometry.y,
           lng: feature.geometry.x,
         };
+        const propertyName = String(feature.attributes.property_name ?? "").trim();
+        const label = propertyName && !String(feature.attributes.address ?? "").toLowerCase().includes(propertyName.toLowerCase())
+          ? `${propertyName} ${feature.attributes.address}`.trim()
+          : feature.attributes.address;
 
         return [{
           id: `qld:${feature.attributes.lotplan}`,
-          label: feature.attributes.address,
+          label,
           state: "QLD",
           address,
           point,
@@ -62,6 +72,7 @@ export class QldGeocoder {
           source: "QLD Addresses",
           metadata: {
             lotplan: feature.attributes.lotplan,
+            propertyName,
           },
         }];
       })

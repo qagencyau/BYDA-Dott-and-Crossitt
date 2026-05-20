@@ -457,11 +457,31 @@ function byda_iet_parse_street_input($value) {
 		'LN' => 'LANE',
 		'LANE' => 'LANE',
 	);
+	$suffixes = array(
+		'E' => 'EAST',
+		'EAST' => 'EAST',
+		'N' => 'NORTH',
+		'NORTH' => 'NORTH',
+		'S' => 'SOUTH',
+		'SOUTH' => 'SOUTH',
+		'W' => 'WEST',
+		'WEST' => 'WEST',
+	);
 
 	$normalized = byda_iet_normalize_upper($value);
 	$parts = preg_split('/\s+/', $normalized);
 	$last_part = !empty($parts) ? $parts[count($parts) - 1] : '';
 	$road_type = isset($aliases[$last_part]) ? $aliases[$last_part] : null;
+	$road_suffix = null;
+
+	if (!$road_type && count($parts) >= 2 && isset($suffixes[$last_part])) {
+		$maybe_type = $parts[count($parts) - 2];
+		if (isset($aliases[$maybe_type])) {
+			$road_type = $aliases[$maybe_type];
+			$road_suffix = $suffixes[$last_part];
+			$parts = array_slice($parts, 0, -1);
+		}
+	}
 
 	if (!$road_type) {
 		return array(
@@ -476,6 +496,7 @@ function byda_iet_parse_street_input($value) {
 		'normalized' => $normalized,
 		'roadName' => implode(' ', array_slice($parts, 0, -1)),
 		'roadType' => $road_type,
+		'roadSuffix' => $road_suffix,
 	);
 }
 
@@ -633,7 +654,13 @@ function byda_iet_normalize_byda_address($address) {
 
 	$line_1 = isset($address['line1']) ? trim((string) $address['line1']) : '';
 	$match = array();
-	preg_match('/^([0-9A-Z\/-]+)\s+(.+)$/i', $line_1, $match);
+	preg_match('/^([0-9]+[0-9A-Z\/-]*)\s+(.+)$/i', $line_1, $match);
+	if (empty($match) && preg_match('/\b([0-9]+[0-9A-Z\/-]*)\s+(.+)$/i', $line_1, $match)) {
+		$parsed_street = byda_iet_parse_street_input(isset($match[2]) ? $match[2] : '');
+		if (empty($parsed_street['roadType'])) {
+			$match = array();
+		}
+	}
 
 	return array(
 		'streetNumber' => byda_iet_normalize_street_number(isset($match[1]) ? $match[1] : ''),

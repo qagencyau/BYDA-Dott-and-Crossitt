@@ -39,6 +39,7 @@ var BydaComponents = (() => {
   var STATE_OPTIONS = ["NSW", "QLD", "VIC"];
   var DEFAULT_VALUE = {
     address: {
+      propertyName: "",
       streetNumber: "",
       streetName: "",
       suburb: "",
@@ -82,6 +83,7 @@ var BydaComponents = (() => {
       back: "Back",
       continue: "Continue",
       restart: "Start again",
+      searchAgain: "Search again",
       choose: "Use This Site",
       chosen: "Selected",
       use: "Use",
@@ -108,11 +110,13 @@ var BydaComponents = (() => {
       title: "Find the right location",
       copy: "Add the address details, then choose the best match from the list.",
       streetNumber: "Street number",
+      propertyName: "Property / building",
       streetName: "Street name",
       suburb: "Suburb",
       state: "State",
       postcode: "Postcode",
       streetNumberPlaceholder: "48",
+      propertyNamePlaceholder: "Ceil",
       streetNamePlaceholder: "Pirrama Rd",
       suburbPlaceholder: "Pyrmont",
       postcodePlaceholder: "2009",
@@ -534,7 +538,7 @@ var BydaComponents = (() => {
     return `IET-REF-${buildIdentifierPart(seed, "JOB")}-${String(Date.now()).slice(-6)}`;
   }
   function formatAddressLabel(address = {}) {
-    const streetLine = joinParts([address.streetNumber, address.streetName]);
+    const streetLine = joinParts([address.propertyName, address.streetNumber, address.streetName]);
     const localityLine = joinParts([address.suburb, address.state, address.postcode]);
     return [streetLine, localityLine].filter(Boolean).join(", ");
   }
@@ -571,6 +575,7 @@ var BydaComponents = (() => {
       this.state = createInitialValue();
       this.notice = "";
       this.noticeTone = "neutral";
+      this.manualAddressEntry = false;
       this.syncingAttribute = false;
       this.candidatesLoading = false;
       this.candidatesError = "";
@@ -646,6 +651,7 @@ var BydaComponents = (() => {
       this.stopStatusPolling();
       this.cancelStatusRequest();
       this.state = createInitialValue(nextValue);
+      this.manualAddressEntry = false;
       this.addressResultsKey = this.state.candidates.length || this.state.existingEnquiries.length ? this.getAddressResultsKey() : "";
       this.notice = "";
       this.noticeTone = "neutral";
@@ -667,6 +673,7 @@ var BydaComponents = (() => {
       this.stopStatusPolling();
       this.cancelStatusRequest();
       this.state = createInitialValue();
+      this.manualAddressEntry = false;
       this.addressResultsKey = "";
       this.notice = USER_COPY.notices.reset;
       this.noticeTone = "neutral";
@@ -688,7 +695,7 @@ var BydaComponents = (() => {
       return hasAddressSearchInput(this.state.address);
     }
     getAddressResultsKey() {
-      return JSON.stringify({ streetNumber: String(this.state.address.streetNumber || "").trim().toUpperCase(), streetName: String(this.state.address.streetName || "").trim().toUpperCase(), suburb: String(this.state.address.suburb || "").trim().toUpperCase(), state: String(this.state.address.state || "").trim().toUpperCase(), postcode: String(this.state.address.postcode || "").replace(/\D/g, "").slice(0, 4) });
+      return JSON.stringify({ propertyName: String(this.state.address.propertyName || "").trim().toUpperCase(), streetNumber: String(this.state.address.streetNumber || "").trim().toUpperCase(), streetName: String(this.state.address.streetName || "").trim().toUpperCase(), suburb: String(this.state.address.suburb || "").trim().toUpperCase(), state: String(this.state.address.state || "").trim().toUpperCase(), postcode: String(this.state.address.postcode || "").replace(/\D/g, "").slice(0, 4) });
     }
     refreshAddressResults({ immediate = false, force = false } = {}) {
       if (!this.canGenerateCandidates()) {
@@ -851,6 +858,7 @@ var BydaComponents = (() => {
       this.state.existingEnquiries = [];
       this.render();
       const params = new URLSearchParams({
+        propertyName: this.state.address.propertyName,
         streetNumber: this.state.address.streetNumber,
         streetName: this.state.address.streetName,
         suburb: this.state.address.suburb,
@@ -1282,7 +1290,7 @@ var BydaComponents = (() => {
       const a = this.state.address;
       const selectedSite = this.state.selectedSite;
       const selectedExistingEnquiry = this.state.selectedExistingEnquiry;
-      const readonlyAddress = this.isAddressReadonly();
+      const readonlyAddress = this.isAddressReadonly() && !this.manualAddressEntry;
       const enteredAddress = formatAddressLabel(this.state.address);
       const historyResolvedSite = this.state.existingEnquiries.find((enquiry) => enquiry.site?.polygon)?.site || null;
       const searchResults = this.state.candidates.length ? this.state.candidates : this.state.existingEnquiries.length && enteredAddress ? [{ id: "history-only-result", title: enteredAddress, source: "Address history", copy: "Past enquiries found for this address.", resolvedSite: historyResolvedSite, addressOnly: !historyResolvedSite }] : [];
@@ -1355,6 +1363,7 @@ var BydaComponents = (() => {
       </div>
     `;
       const addressFields = [
+        ...a.propertyName ? [{ label: USER_COPY.search.propertyName, value: a.propertyName }] : [],
         { label: USER_COPY.search.streetNumber, value: a.streetNumber },
         { label: USER_COPY.search.streetName, value: a.streetName },
         { label: USER_COPY.search.suburb, value: a.suburb },
@@ -1378,8 +1387,15 @@ var BydaComponents = (() => {
             `;
       }).join("")}
         </div>
+        <div class="button-row">
+          <button class="button" type="button" data-action="manual-address">${USER_COPY.buttons.searchAgain}</button>
+        </div>
       ` : `
         <div class="form-grid">
+          <label class="field">
+            <span class="field-label">${USER_COPY.search.propertyName}</span>
+            <input class="control" data-scope="address" name="propertyName" value="${escapeHtml(a.propertyName)}" placeholder="${USER_COPY.search.propertyNamePlaceholder}" autocomplete="organization" />
+          </label>
           <label class="field">
             <span class="field-label">${USER_COPY.search.streetNumber}</span>
             <input class="control" data-scope="address" name="streetNumber" value="${escapeHtml(a.streetNumber)}" placeholder="${USER_COPY.search.streetNumberPlaceholder}" autocomplete="address-line1" inputmode="numeric" />
@@ -1575,6 +1591,14 @@ var BydaComponents = (() => {
       }
       if (action === "complete") {
         void this.completeFlow();
+        return;
+      }
+      if (action === "manual-address") {
+        this.manualAddressEntry = true;
+        this.notice = "";
+        this.noticeTone = "neutral";
+        this.render();
+        this.emitComponentEvent("byda-process-change", { reason: "manual-address" });
         return;
       }
       if (action === "select-candidate") {

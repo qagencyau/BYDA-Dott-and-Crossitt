@@ -6,6 +6,7 @@ It follows the same service shape as the existing `poller-example`:
 
 - authenticated `POST /start`
 - authenticated `GET /options`
+- authenticated `GET /addresses/search`
 - authenticated `POST /organisations/search`
 - authenticated `POST /enquiries`
 - authenticated `GET /enquiries/search`
@@ -26,6 +27,7 @@ It follows the same service shape as the existing `poller-example`:
 - `BYDA_CLIENT_ID` (required)
 - `BYDA_CLIENT_SECRET` (required)
 - `REQUEST_TIMEOUT_MS` (default `20000`)
+- `ADDRESS_BUFFER_METERS` (default `10`; buffer used for address-search point results before cadastral enrichment)
 - `REPORT_WAIT_TIMEOUT_MS` (default `75000`; how long `GET /enquiries/:id/report` waits for BYDA to expose the PDF and for storage/signing to complete)
 - `REPORT_WAIT_INTERVAL_MS` (default `5000`; retry interval while waiting for the report URL)
 - `JOB_INITIAL_DELAY_MS` (default `30000` / 30 seconds)
@@ -123,6 +125,7 @@ For DigitalOcean, deploy the image as a web service/container and set the HTTP p
 - `BYDA_CLIENT_SECRET`
 - `BYDA_BASE_URL` if overriding the environment default
 - `REQUEST_TIMEOUT_MS` if required
+- `ADDRESS_BUFFER_METERS` if required
 - `REPORT_WAIT_TIMEOUT_MS` if required
 - `REPORT_WAIT_INTERVAL_MS` if required
 - `JOB_INITIAL_DELAY_MS` if required
@@ -220,6 +223,13 @@ curl http://localhost:8081/jobs \
 ```
 
 ## Lookup endpoints
+
+Search an address for WordPress location selection:
+
+```bash
+curl "http://localhost:8081/addresses/search?propertyName=Ceil&streetNumber=2&streetName=Ragamuffin%20Dr%20West&suburb=Coomera&state=QLD&postcode=4209" \
+  -H "X-BYDA-IET-Secret: change-me"
+```
 
 Search recent BYDA enquiries:
 

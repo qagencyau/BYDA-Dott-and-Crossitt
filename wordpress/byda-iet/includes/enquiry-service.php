@@ -94,6 +94,11 @@ function byda_iet_build_byda_payload($input, $site) {
 	$locations_in_road = in_array('Road Reserve', $location_types, true) && !empty($input['locationsInRoad']) && is_array($input['locationsInRoad'])
 		? array_values($input['locationsInRoad'])
 		: array();
+	$address_line_1 = trim(
+		(!empty($input['address']['propertyName']) ? $input['address']['propertyName'] . ' ' : '') .
+		$input['address']['streetNumber'] . ' ' .
+		$input['address']['streetName']
+	);
 
 	return array(
 		'userReference' => !empty($input['userReference']) ? $input['userReference'] : null,
@@ -110,7 +115,7 @@ function byda_iet_build_byda_payload($input, $site) {
 		'source' => 'API',
 		'isSandboxTest' => !empty($input['isSandboxTest']) ? true : null,
 		'Address' => array(
-			'line1' => trim($input['address']['streetNumber'] . ' ' . $input['address']['streetName']),
+			'line1' => $address_line_1,
 			'line2' => null,
 			'locality' => $input['address']['suburb'],
 			'state' => $input['address']['state'],

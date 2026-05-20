@@ -113,6 +113,26 @@ function byda_iet_external_poller_get_options($settings = null) {
 	return byda_iet_external_poller_request('GET', '/options', null, $settings);
 }
 
+function byda_iet_external_poller_search_addresses($address, $settings = null) {
+	$query = array(
+		'propertyName' => isset($address['propertyName']) ? $address['propertyName'] : '',
+		'streetNumber' => isset($address['streetNumber']) ? $address['streetNumber'] : '',
+		'streetName' => isset($address['streetName']) ? $address['streetName'] : '',
+		'suburb' => isset($address['suburb']) ? $address['suburb'] : '',
+		'state' => isset($address['state']) ? $address['state'] : '',
+		'postcode' => isset($address['postcode']) ? $address['postcode'] : '',
+	);
+
+	$pathname = byda_iet_build_url('/addresses/search', $query);
+	$response = byda_iet_external_poller_request('GET', $pathname, null, $settings);
+
+	if (is_wp_error($response)) {
+		return $response;
+	}
+
+	return isset($response['sites']) && is_array($response['sites']) ? $response['sites'] : array();
+}
+
 function byda_iet_external_poller_get_organisations($site, $settings = null) {
 	return byda_iet_external_poller_request(
 		'POST',

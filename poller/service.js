@@ -357,6 +357,70 @@ function parseAddressStreetInput(value) {
 	};
 }
 
+const ADDRESS_FULL_STREET_TYPE_PATTERN = /\b(ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BLVD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b(?:\s+(?:NORTH|SOUTH|EAST|WEST|N|S|E|W))?/i;
+
+function parseAddressStreetLine(value) {
+	const original = normalizeAddressWhitespace(value);
+	const leadingMatch = original.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+	let embeddedMatch = null;
+
+	for (const match of original.matchAll(/\b([0-9]+[0-9A-Z/-]*)\b/g)) {
+		const streetName = original.slice(match.index + match[0].length).trim();
+		if (streetName && ADDRESS_FULL_STREET_TYPE_PATTERN.test(streetName)) {
+			embeddedMatch = {
+				propertyName: original.slice(0, match.index).trim(),
+				streetNumber: match[1].trim(),
+				streetName,
+			};
+		}
+	}
+
+	return {
+		propertyName: leadingMatch ? "" : embeddedMatch?.propertyName || "",
+		streetNumber: leadingMatch ? leadingMatch[1].trim() : embeddedMatch?.streetNumber || "",
+		streetName: leadingMatch ? leadingMatch[2].trim() : embeddedMatch?.streetName || original,
+	};
+}
+
+function parseFullAddressInput(value) {
+	let working = normalizeAddressWhitespace(value).replace(/\bAustralia\b\.?$/i, "").trim();
+	if (!working) {
+		return {};
+	}
+
+	const postcodeMatch = working.match(/\b(\d{4})\b(?!.*\b\d{4}\b)/);
+	const stateMatch = working.match(/\b(NSW|QLD|VIC)\b/i);
+	const postcode = postcodeMatch ? postcodeMatch[1] : "";
+	const state = stateMatch ? stateMatch[1].toUpperCase() : "";
+
+	if (postcodeMatch) working = working.replace(postcodeMatch[0], " ");
+	if (stateMatch) working = working.replace(stateMatch[0], " ");
+	working = working.replace(/\s+/g, " ").replace(/\s+,/g, ",").replace(/,\s*/g, ", ").trim();
+
+	const segments = working.split(",").map((segment) => segment.trim()).filter(Boolean);
+	let streetLine = "";
+	let suburb = "";
+	if (segments.length >= 2) {
+		streetLine = segments[0];
+		suburb = segments[segments.length - 1];
+	} else {
+		const match = working.match(new RegExp(`^(.+?${ADDRESS_FULL_STREET_TYPE_PATTERN.source})\\s+(.+)$`, "i"));
+		if (match) {
+			streetLine = match[1].trim();
+			suburb = match[2].trim();
+		} else {
+			streetLine = working;
+		}
+	}
+
+	return {
+		...parseAddressStreetLine(streetLine),
+		suburb,
+		state,
+		postcode,
+	};
+}
+
 function createAddressSearchError(message, status = 400) {
 	const error = new Error(message);
 	error.status = status;
@@ -364,13 +428,15 @@ function createAddressSearchError(message, status = 400) {
 }
 
 function parseAddressSearchParams(searchParams) {
+	const fullAddress = searchParams.get("q") || searchParams.get("address") || searchParams.get("fullAddress") || searchParams.get("searchText") || "";
+	const parsedAddress = fullAddress ? parseFullAddressInput(fullAddress) : {};
 	const address = {
-		propertyName: normalizeAddressWhitespace(searchParams.get("propertyName") || ""),
-		streetNumber: normalizeAddressWhitespace(searchParams.get("streetNumber") || ""),
-		streetName: normalizeAddressWhitespace(searchParams.get("streetName") || ""),
-		suburb: normalizeAddressWhitespace(searchParams.get("suburb") || ""),
-		state: normalizeAddressUpper(searchParams.get("state") || ""),
-		postcode: String(searchParams.get("postcode") || "").replace(/\D/g, "").slice(0, 4),
+		propertyName: normalizeAddressWhitespace(searchParams.get("propertyName") || parsedAddress.propertyName || ""),
+		streetNumber: normalizeAddressWhitespace(searchParams.get("streetNumber") || parsedAddress.streetNumber || ""),
+		streetName: normalizeAddressWhitespace(searchParams.get("streetName") || parsedAddress.streetName || ""),
+		suburb: normalizeAddressWhitespace(searchParams.get("suburb") || parsedAddress.suburb || ""),
+		state: normalizeAddressUpper(searchParams.get("state") || parsedAddress.state || ""),
+		postcode: String(searchParams.get("postcode") || parsedAddress.postcode || "").replace(/\D/g, "").slice(0, 4),
 	};
 
 	if (!address.streetNumber || address.streetNumber.length > 20) {

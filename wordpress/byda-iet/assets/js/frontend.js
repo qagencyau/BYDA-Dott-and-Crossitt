@@ -311,6 +311,16 @@
       ? JSON.stringify({ mode: current.submitted ? "reference" : "address", referenceNumber: currentReference })
       : JSON.stringify({ mode: "address", address: normalizeAddress(current.address || {}) });
 
+    if (!isReferenceMode && component.hasAttribute("manual-address-override")) {
+      component.setAttribute("prefill-auto-search", "false");
+      debugLog("Skipping address prefill while manual address override is active.", {
+        instance: host.dataset.instance || "",
+        currentStep: component.currentStep,
+      });
+      syncGravityFormFields(component, sources);
+      return;
+    }
+
     if (normalizedNext === normalizedPrevious) {
       debugLog("Prefill unchanged.", {
         instance: host.dataset.instance || "",

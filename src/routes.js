@@ -96,6 +96,83 @@ const bydaEnquiryParamSchema = z.object({
   enquiryId: z.coerce.number().int().positive(),
 });
 
+const ADDRESS_STREET_TYPE_PATTERN = /\b(ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BLVD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b(?:\s+(?:NORTH|SOUTH|EAST|WEST|N|S|E|W))?/i;
+
+function parseStreetLine(value) {
+  const original = String(value || "").replace(/\s+/g, " ").trim();
+  const leadingMatch = original.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+  let embeddedMatch = null;
+
+  for (const match of original.matchAll(/\b([0-9]+[0-9A-Z/-]*)\b/g)) {
+    const streetName = original.slice(match.index + match[0].length).trim();
+    if (streetName && ADDRESS_STREET_TYPE_PATTERN.test(streetName)) {
+      embeddedMatch = {
+        propertyName: original.slice(0, match.index).trim(),
+        streetNumber: match[1].trim(),
+        streetName,
+      };
+    }
+  }
+
+  return {
+    propertyName: leadingMatch ? "" : embeddedMatch?.propertyName || "",
+    streetNumber: leadingMatch ? leadingMatch[1].trim() : embeddedMatch?.streetNumber || "",
+    streetName: leadingMatch ? leadingMatch[2].trim() : embeddedMatch?.streetName || original,
+  };
+}
+
+function parseFullAddress(value) {
+  let working = String(value || "").replace(/\s+/g, " ").replace(/\bAustralia\b\.?$/i, "").trim();
+  if (!working) return {};
+
+  const postcodeMatch = working.match(/\b(\d{4})\b(?!.*\b\d{4}\b)/);
+  const stateMatch = working.match(/\b(NSW|QLD|VIC)\b/i);
+  const postcode = postcodeMatch ? postcodeMatch[1] : "";
+  const state = stateMatch ? stateMatch[1].toUpperCase() : "";
+
+  if (postcodeMatch) working = working.replace(postcodeMatch[0], " ");
+  if (stateMatch) working = working.replace(stateMatch[0], " ");
+  working = working.replace(/\s+/g, " ").replace(/\s+,/g, ",").replace(/,\s*/g, ", ").trim();
+
+  const segments = working.split(",").map((segment) => segment.trim()).filter(Boolean);
+  let streetLine = "";
+  let suburb = "";
+
+  if (segments.length >= 2) {
+    streetLine = segments[0];
+    suburb = segments[segments.length - 1];
+  } else {
+    const match = working.match(new RegExp(`^(.+?${ADDRESS_STREET_TYPE_PATTERN.source})\\s+(.+)$`, "i"));
+    if (match) {
+      streetLine = match[1].trim();
+      suburb = match[2].trim();
+    } else {
+      streetLine = working;
+    }
+  }
+
+  return {
+    ...parseStreetLine(streetLine),
+    suburb,
+    state,
+    postcode,
+  };
+}
+
+function getAddressSearchInput(query) {
+  const fullAddress = query.q || query.address || query.fullAddress || query.searchText || "";
+  const parsed = fullAddress ? parseFullAddress(fullAddress) : {};
+  return {
+    ...parsed,
+    propertyName: query.propertyName || parsed.propertyName,
+    streetNumber: query.streetNumber || parsed.streetNumber,
+    streetName: query.streetName || parsed.streetName,
+    suburb: query.suburb || parsed.suburb,
+    state: query.state || parsed.state,
+    postcode: query.postcode || parsed.postcode,
+  };
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -219,7 +296,10 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
   }));
 
   router.get("/api/enquiries/by-address", asyncHandler(async (request, response) => {
-    const query = enquiryAddressQuerySchema.parse(request.query);
+    const query = enquiryAddressQuerySchema.parse({
+      ...request.query,
+      ...getAddressSearchInput(request.query),
+    });
     const history = await enquiryService.findEnquiriesByAddress({
       address: {
         streetNumber: query.streetNumber,
@@ -241,13 +321,7 @@ export function createRouter({ enquiryService, store, poller, logger, appConfig,
   }));
 
   router.get("/api/addresses/search", asyncHandler(async (request, response) => {
-    const input = addressSchema.parse({
-      streetNumber: request.query.streetNumber,
-      streetName: request.query.streetName,
-      suburb: request.query.suburb,
-      state: request.query.state,
-      postcode: request.query.postcode,
-    });
+    const input = addressSchema.parse(getAddressSearchInput(request.query));
 
     const sites = await enquiryService.searchAddresses(input);
     response.json({ sites });

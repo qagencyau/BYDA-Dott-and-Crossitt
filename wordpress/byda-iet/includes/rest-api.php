@@ -119,16 +119,7 @@ function byda_iet_rest_options() {
 }
 
 function byda_iet_rest_search_addresses(WP_REST_Request $request) {
-	$address = byda_iet_validate_address(
-		array(
-			'propertyName' => $request->get_param('propertyName'),
-			'streetNumber' => $request->get_param('streetNumber'),
-			'streetName' => $request->get_param('streetName'),
-			'suburb' => $request->get_param('suburb'),
-			'state' => $request->get_param('state'),
-			'postcode' => $request->get_param('postcode'),
-		)
-	);
+	$address = byda_iet_validate_address(byda_iet_address_from_request($request));
 
 	if (is_wp_error($address)) {
 		return $address;
@@ -143,16 +134,7 @@ function byda_iet_rest_search_addresses(WP_REST_Request $request) {
 }
 
 function byda_iet_rest_enquiries_by_address(WP_REST_Request $request) {
-	$address = byda_iet_validate_address(
-		array(
-			'propertyName' => $request->get_param('propertyName'),
-			'streetNumber' => $request->get_param('streetNumber'),
-			'streetName' => $request->get_param('streetName'),
-			'suburb' => $request->get_param('suburb'),
-			'state' => $request->get_param('state'),
-			'postcode' => $request->get_param('postcode'),
-		)
-	);
+	$address = byda_iet_validate_address(byda_iet_address_from_request($request));
 
 	if (is_wp_error($address)) {
 		return $address;
@@ -495,6 +477,104 @@ function byda_iet_rest_mock_report(WP_REST_Request $request) {
 
 function byda_iet_bad_request($message) {
 	return new WP_Error('byda_iet_bad_request', $message, array('status' => 400));
+}
+
+function byda_iet_parse_full_address_street_line($value) {
+	$original = byda_iet_normalize_whitespace($value);
+	$street_type_pattern = '/\b(ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BLVD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b(?:\s+(?:NORTH|SOUTH|EAST|WEST|N|S|E|W))?/i';
+	$leading_match = array();
+	$embedded_match = null;
+
+	preg_match('/^([0-9]+[0-9A-Z\/-]*)\s+(.+)$/i', $original, $leading_match);
+	if (preg_match_all('/\b([0-9]+[0-9A-Z\/-]*)\b/i', $original, $matches, PREG_OFFSET_CAPTURE)) {
+		foreach ($matches[1] as $match) {
+			$street_name = trim(substr($original, $match[1] + strlen($match[0])));
+			if ('' !== $street_name && preg_match($street_type_pattern, $street_name)) {
+				$embedded_match = array(
+					'propertyName' => trim(substr($original, 0, $match[1])),
+					'streetNumber' => trim($match[0]),
+					'streetName' => $street_name,
+				);
+			}
+		}
+	}
+
+	return array(
+		'propertyName' => !empty($leading_match) ? '' : (!empty($embedded_match['propertyName']) ? $embedded_match['propertyName'] : ''),
+		'streetNumber' => !empty($leading_match[1]) ? trim($leading_match[1]) : (!empty($embedded_match['streetNumber']) ? $embedded_match['streetNumber'] : ''),
+		'streetName' => !empty($leading_match[2]) ? trim($leading_match[2]) : (!empty($embedded_match['streetName']) ? $embedded_match['streetName'] : $original),
+	);
+}
+
+function byda_iet_parse_full_address($value) {
+	$working = preg_replace('/\bAustralia\b\.?$/i', '', byda_iet_normalize_whitespace($value));
+	$working = byda_iet_normalize_whitespace($working);
+	if ('' === $working) {
+		return array();
+	}
+
+	$postcode = '';
+	$state = '';
+	$postcode_match = array();
+	$state_match = array();
+	if (preg_match('/\b(\d{4})\b(?!.*\b\d{4}\b)/', $working, $postcode_match)) {
+		$postcode = $postcode_match[1];
+		$working = str_replace($postcode_match[0], ' ', $working);
+	}
+	if (preg_match('/\b(NSW|QLD|VIC)\b/i', $working, $state_match)) {
+		$state = strtoupper($state_match[1]);
+		$working = str_ireplace($state_match[0], ' ', $working);
+	}
+	$working = trim(preg_replace(array('/\s+/', '/\s+,/', '/,\s*/'), array(' ', ',', ', '), $working));
+
+	$segments = array_values(array_filter(array_map('trim', explode(',', $working))));
+	$street_line = '';
+	$suburb = '';
+	if (count($segments) >= 2) {
+		$street_line = $segments[0];
+		$suburb = $segments[count($segments) - 1];
+	} else {
+		$street_type_pattern = '\b(?:ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BLVD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b(?:\s+(?:NORTH|SOUTH|EAST|WEST|N|S|E|W))?';
+		$match = array();
+		if (preg_match('/^(.+?' . $street_type_pattern . ')\s+(.+)$/i', $working, $match)) {
+			$street_line = trim($match[1]);
+			$suburb = trim($match[2]);
+		} else {
+			$street_line = $working;
+		}
+	}
+
+	return array_merge(
+		byda_iet_parse_full_address_street_line($street_line),
+		array(
+			'suburb' => $suburb,
+			'state' => $state,
+			'postcode' => $postcode,
+		)
+	);
+}
+
+function byda_iet_address_from_request(WP_REST_Request $request) {
+	$full_address = $request->get_param('q');
+	if (null === $full_address || '' === $full_address) {
+		$full_address = $request->get_param('address');
+	}
+	if (null === $full_address || '' === $full_address) {
+		$full_address = $request->get_param('fullAddress');
+	}
+	if (null === $full_address || '' === $full_address) {
+		$full_address = $request->get_param('searchText');
+	}
+	$parsed = '' !== trim((string) $full_address) ? byda_iet_parse_full_address($full_address) : array();
+
+	return array(
+		'propertyName' => $request->get_param('propertyName') ?: (isset($parsed['propertyName']) ? $parsed['propertyName'] : ''),
+		'streetNumber' => $request->get_param('streetNumber') ?: (isset($parsed['streetNumber']) ? $parsed['streetNumber'] : ''),
+		'streetName' => $request->get_param('streetName') ?: (isset($parsed['streetName']) ? $parsed['streetName'] : ''),
+		'suburb' => $request->get_param('suburb') ?: (isset($parsed['suburb']) ? $parsed['suburb'] : ''),
+		'state' => $request->get_param('state') ?: (isset($parsed['state']) ? $parsed['state'] : ''),
+		'postcode' => $request->get_param('postcode') ?: (isset($parsed['postcode']) ? $parsed['postcode'] : ''),
+	);
 }
 
 function byda_iet_validate_address($address) {

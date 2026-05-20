@@ -9,6 +9,7 @@ const ROAD_LOCATION_OPTIONS = ["Road", "Nature Strip", "Footpath"];
 const STATE_OPTIONS = ["NSW", "QLD", "VIC"];
 const DEFAULT_VALUE = {
   address: {
+    searchText: "",
     propertyName: "",
     streetNumber: "",
     streetName: "",
@@ -64,11 +65,11 @@ const USER_COPY = {
   },
   notices: {
     reset: "You can start again at any time.",
-    searchShort: "Enter street number, street name, suburb, state, and postcode to search.",
+    searchShort: "Enter a full street address to search.",
     datesNeeded: "Add your start and end dates to continue.",
     locationSelected: "Location selected.",
     referenceReady: "Reference number created.",
-    searchEmpty: "Enter street number, street name, suburb, state, and postcode to see matches.",
+    searchEmpty: "Enter a full street address including suburb, state, and postcode to see matches.",
     searchNone: "Check the address details to see more matches.",
     optionsLoading: "Loading enquiry options.",
     optionsError: "Enquiry options could not be loaded.",
@@ -78,7 +79,9 @@ const USER_COPY = {
   },
   search: {
     title: "Find the right location",
-    copy: "Add the address details, then choose the best match from the list.",
+    copy: "Search by full address, then choose the best match from the list.",
+    fullAddress: "Address",
+    fullAddressPlaceholder: "2 Ragamuffin Dr West, Coomera QLD 4209",
     streetNumber: "Street number",
     propertyName: "Property / building",
     streetName: "Street name",
@@ -90,7 +93,7 @@ const USER_COPY = {
     streetNamePlaceholder: "Pirrama Rd",
     suburbPlaceholder: "Pyrmont",
     postcodePlaceholder: "2009",
-    helper: "Matches appear below once the address and state are entered.",
+    helper: "Matches appear below once the address can be resolved.",
     resultLabel: "Match",
     selectedLabel: "Selected location",
   },
@@ -477,6 +480,7 @@ function buildAddressOnlySite(address = {}) {
 function createInitialValue(input = {}) {
   const next = cloneValue(DEFAULT_VALUE);
   if (input.address && typeof input.address === "object") Object.assign(next.address, input.address);
+  if (!next.address.searchText) next.address.searchText = formatAddressLabel(next.address);
   if (input.enquiry && typeof input.enquiry === "object") Object.assign(next.enquiry, input.enquiry);
   if (next.enquiry.authority && !next.enquiry.otherAuthorityName) next.enquiry.otherAuthorityName = next.enquiry.authority;
   if (input.tracking && typeof input.tracking === "object") Object.assign(next.tracking, input.tracking);
@@ -504,6 +508,72 @@ function formatAddressLabel(address = {}) {
   const streetLine = joinParts([address.propertyName, address.streetNumber, address.streetName]);
   const localityLine = joinParts([address.suburb, address.state, address.postcode]);
   return [streetLine, localityLine].filter(Boolean).join(", ");
+}
+const STREET_TYPE_PATTERN = /\b(ALLEY|ALLY|AVENUE|AVE|BOULEVARD|BLVD|BVD|CIRCUIT|CCT|CLOSE|CL|COURT|CT|CRESCENT|CRES|DRIVE|DR|ESPLANADE|ESP|HIGHWAY|HWY|LANE|LN|PARADE|PDE|PLACE|PL|ROAD|RD|STREET|ST|TERRACE|TCE|WAY)\b(?:\s+(?:NORTH|SOUTH|EAST|WEST|N|S|E|W))?/i;
+function parseStreetLine(value) {
+  const original = String(value || "").replace(/\s+/g, " ").trim();
+  const leadingMatch = original.match(/^([0-9]+[0-9A-Z/-]*)\s+(.+)$/i);
+  let embeddedMatch = null;
+
+  for (const match of original.matchAll(/\b([0-9]+[0-9A-Z/-]*)\b/g)) {
+    const streetName = original.slice(match.index + match[0].length).trim();
+    if (streetName && STREET_TYPE_PATTERN.test(streetName)) {
+      embeddedMatch = {
+        propertyName: original.slice(0, match.index).trim(),
+        streetNumber: match[1].trim(),
+        streetName,
+      };
+    }
+  }
+
+  return {
+    original,
+    propertyName: leadingMatch ? "" : embeddedMatch?.propertyName || "",
+    streetNumber: leadingMatch ? leadingMatch[1].trim() : embeddedMatch?.streetNumber || "",
+    streetName: leadingMatch ? leadingMatch[2].trim() : embeddedMatch?.streetName || original,
+  };
+}
+function parseFullAddress(value) {
+  const searchText = String(value || "").replace(/\s+/g, " ").trim();
+  if (!searchText) return {};
+
+  let working = searchText.replace(/\bAustralia\b\.?$/i, "").replace(/\s+/g, " ").trim();
+  const postcodeMatch = working.match(/\b(\d{4})\b(?!.*\b\d{4}\b)/);
+  const stateMatch = working.match(/\b(NSW|QLD|VIC)\b/i);
+  const postcode = postcodeMatch ? postcodeMatch[1] : "";
+  const state = stateMatch ? stateMatch[1].toUpperCase() : "";
+
+  if (postcodeMatch) working = working.replace(postcodeMatch[0], " ");
+  if (stateMatch) working = working.replace(stateMatch[0], " ");
+  working = working.replace(/\s+/g, " ").replace(/\s+,/g, ",").replace(/,\s*/g, ", ").trim();
+
+  const segments = working.split(",").map((segment) => segment.trim()).filter(Boolean);
+  let streetLine = "";
+  let suburb = "";
+
+  if (segments.length >= 2) {
+    streetLine = segments[0];
+    suburb = segments[segments.length - 1];
+  } else {
+    const match = working.match(new RegExp(`^(.+?${STREET_TYPE_PATTERN.source})\\s+(.+)$`, "i"));
+    if (match) {
+      streetLine = match[1].trim();
+      suburb = match[2].trim();
+    } else {
+      streetLine = working;
+    }
+  }
+
+  const parsedStreet = parseStreetLine(streetLine);
+  return {
+    searchText,
+    propertyName: parsedStreet.propertyName,
+    streetNumber: parsedStreet.streetNumber,
+    streetName: parsedStreet.streetName,
+    suburb,
+    state,
+    postcode,
+  };
 }
 function hasAddressSearchInput(address = {}) {
   return Boolean(
@@ -633,6 +703,7 @@ export class BydaProcessSteps extends HTMLElement {
     this.cancelStatusRequest();
     this.state = createInitialValue(nextValue);
     this.manualAddressEntry = false;
+    this.removeAttribute("manual-address-override");
     this.addressResultsKey = (this.state.candidates.length || this.state.existingEnquiries.length) ? this.getAddressResultsKey() : "";
     this.notice = "";
     this.noticeTone = "neutral";
@@ -655,10 +726,10 @@ export class BydaProcessSteps extends HTMLElement {
     if (this.isConnected) this.render();
   }
 
-  reset() { this.cancelAddressResultsRefresh(); this.stopStatusPolling(); this.cancelStatusRequest(); this.state = createInitialValue(); this.manualAddressEntry = false; this.addressResultsKey = ""; this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.candidatesError = ""; this.candidatesLoading = false; this.existingEnquiriesError = ""; this.existingEnquiriesLoading = false; this.authorities = []; this.authoritiesError = ""; this.authoritiesLoading = false; this.submissionLoading = false; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
+  reset() { this.cancelAddressResultsRefresh(); this.stopStatusPolling(); this.cancelStatusRequest(); this.state = createInitialValue(); this.manualAddressEntry = false; this.removeAttribute("manual-address-override"); this.addressResultsKey = ""; this.notice = USER_COPY.notices.reset; this.noticeTone = "neutral"; this.candidatesError = ""; this.candidatesLoading = false; this.existingEnquiriesError = ""; this.existingEnquiriesLoading = false; this.authorities = []; this.authoritiesError = ""; this.authoritiesLoading = false; this.submissionLoading = false; this.setStepIndex(0, { emitEvent: true, reason: "reset" }); this.emitComponentEvent("byda-process-change", { reason: "reset" }); }
   goToStep(nextStep) { this.setStepIndex(parseInteger(nextStep, 1) - 1, { emitEvent: true, reason: "programmatic" }); }
   canGenerateCandidates() { return hasAddressSearchInput(this.state.address); }
-  getAddressResultsKey() { return JSON.stringify({ propertyName: String(this.state.address.propertyName || "").trim().toUpperCase(), streetNumber: String(this.state.address.streetNumber || "").trim().toUpperCase(), streetName: String(this.state.address.streetName || "").trim().toUpperCase(), suburb: String(this.state.address.suburb || "").trim().toUpperCase(), state: String(this.state.address.state || "").trim().toUpperCase(), postcode: String(this.state.address.postcode || "").replace(/\D/g, "").slice(0, 4) }); }
+  getAddressResultsKey() { return JSON.stringify({ searchText: String(this.state.address.searchText || "").trim().toUpperCase(), propertyName: String(this.state.address.propertyName || "").trim().toUpperCase(), streetNumber: String(this.state.address.streetNumber || "").trim().toUpperCase(), streetName: String(this.state.address.streetName || "").trim().toUpperCase(), suburb: String(this.state.address.suburb || "").trim().toUpperCase(), state: String(this.state.address.state || "").trim().toUpperCase(), postcode: String(this.state.address.postcode || "").replace(/\D/g, "").slice(0, 4) }); }
   refreshAddressResults({ immediate = false, force = false } = {}) {
     if (!this.canGenerateCandidates()) {
       this.scheduleAddressResultsRefresh({ immediate });
@@ -809,6 +880,7 @@ export class BydaProcessSteps extends HTMLElement {
     this.state.existingEnquiries = [];
     this.render();
     const params = new URLSearchParams({
+      q: this.state.address.searchText || formatAddressLabel(this.state.address),
       propertyName: this.state.address.propertyName,
       streetNumber: this.state.address.streetNumber,
       streetName: this.state.address.streetName,
@@ -1329,6 +1401,7 @@ export class BydaProcessSteps extends HTMLElement {
       { label: USER_COPY.search.state, value: a.state },
       { label: USER_COPY.search.postcode, value: a.postcode },
     ];
+    const parsedSummary = this.canGenerateCandidates() ? formatAddressLabel(a) : "";
     const addressSummary = readonlyAddress
       ? `
         <div class="readonly-address">
@@ -1352,35 +1425,11 @@ export class BydaProcessSteps extends HTMLElement {
         </div>
       `
       : `
-        <div class="form-grid">
-          <label class="field">
-            <span class="field-label">${USER_COPY.search.propertyName}</span>
-            <input class="control" data-scope="address" name="propertyName" value="${escapeHtml(a.propertyName)}" placeholder="${USER_COPY.search.propertyNamePlaceholder}" autocomplete="organization" />
-          </label>
-          <label class="field">
-            <span class="field-label">${USER_COPY.search.streetNumber}</span>
-            <input class="control" data-scope="address" name="streetNumber" value="${escapeHtml(a.streetNumber)}" placeholder="${USER_COPY.search.streetNumberPlaceholder}" autocomplete="address-line1" inputmode="numeric" />
-          </label>
-          <label class="field">
-            <span class="field-label">${USER_COPY.search.postcode}</span>
-            <input class="control" data-scope="address" name="postcode" value="${escapeHtml(a.postcode)}" placeholder="${USER_COPY.search.postcodePlaceholder}" autocomplete="postal-code" inputmode="numeric" />
-          </label>
-          <label class="field wide">
-            <span class="field-label">${USER_COPY.search.streetName}</span>
-            <input class="control" data-scope="address" name="streetName" value="${escapeHtml(a.streetName)}" placeholder="${USER_COPY.search.streetNamePlaceholder}" autocomplete="address-line1" />
-          </label>
-          <label class="field">
-            <span class="field-label">${USER_COPY.search.suburb}</span>
-            <input class="control" data-scope="address" name="suburb" value="${escapeHtml(a.suburb)}" placeholder="${USER_COPY.search.suburbPlaceholder}" autocomplete="address-level2" />
-          </label>
-          <label class="field">
-            <span class="field-label">${USER_COPY.search.state}</span>
-            <select class="control" data-scope="address" name="state">
-              <option value="" ${a.state ? "" : "selected"}></option>
-              ${STATE_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${a.state === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-            </select>
-          </label>
-        </div>
+        <label class="field">
+          <span class="field-label">${USER_COPY.search.fullAddress}</span>
+          <input class="control" data-scope="address" name="searchText" value="${escapeHtml(a.searchText || formatAddressLabel(a))}" placeholder="${USER_COPY.search.fullAddressPlaceholder}" autocomplete="street-address" />
+        </label>
+        ${parsedSummary ? `<p class="summary-help">Parsed as ${escapeHtml(parsedSummary)}.</p>` : ""}
       `;
     return `
       ${addressSummary}
@@ -1522,6 +1571,28 @@ export class BydaProcessSteps extends HTMLElement {
     const field = target.name;
     if (!scope || !field || (scope !== "address" && scope !== "enquiry")) return false;
     const nextValue = target instanceof HTMLInputElement && target.type === "checkbox" ? target.checked : target.value;
+    if (scope === "address" && field === "searchText") {
+      const parsedAddress = parseFullAddress(nextValue);
+      if (this.state.address.searchText === nextValue && this.getAddressResultsKey() === JSON.stringify({ searchText: String(nextValue || "").trim().toUpperCase(), propertyName: String(parsedAddress.propertyName || "").trim().toUpperCase(), streetNumber: String(parsedAddress.streetNumber || "").trim().toUpperCase(), streetName: String(parsedAddress.streetName || "").trim().toUpperCase(), suburb: String(parsedAddress.suburb || "").trim().toUpperCase(), state: String(parsedAddress.state || "").trim().toUpperCase(), postcode: String(parsedAddress.postcode || "").replace(/\D/g, "").slice(0, 4) })) return false;
+      this.state.address = {
+        ...this.state.address,
+        propertyName: "",
+        streetNumber: "",
+        streetName: "",
+        suburb: "",
+        state: "",
+        postcode: "",
+        ...parsedAddress,
+        searchText: nextValue,
+      };
+      this.state.candidates = [];
+      this.state.existingEnquiries = [];
+      this.state.selectedSite = null;
+      this.state.selectedExistingEnquiry = null;
+      this.setDraftTracking();
+      this.syncAddressResults();
+      return true;
+    }
     if (this.state[scope][field] === nextValue) return false;
     this.state[scope][field] = nextValue;
     if (scope === "address") {
@@ -1567,6 +1638,14 @@ export class BydaProcessSteps extends HTMLElement {
     if (action === "complete") { void this.completeFlow(); return; }
     if (action === "manual-address") {
       this.manualAddressEntry = true;
+      this.setAttribute("manual-address-override", "true");
+      this.state.selectedSite = null;
+      this.state.selectedExistingEnquiry = null;
+      this.authorities = [];
+      this.authoritiesError = "";
+      this.authoritiesLoading = false;
+      this.state.enquiry.userReference = "";
+      this.setDraftTracking();
       this.notice = "";
       this.noticeTone = "neutral";
       this.render();

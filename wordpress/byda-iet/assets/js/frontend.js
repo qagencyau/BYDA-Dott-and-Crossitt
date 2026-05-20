@@ -120,8 +120,23 @@
     const sync = debounce(() => {
       controller.sources = resolveSources(host);
       bindSourceListeners(controller.sources, sync);
+      const nextSignature = getSourceSignature(controller.sources);
+      const signatureChanged = nextSignature !== controller.lastSourceSignature;
+      controller.lastSourceSignature = nextSignature;
+      if (!signatureChanged) {
+        // Source fields (address, reference) didn't change — an output field like the
+        // tracking token triggered this sync. Skip re-applying GF values to the
+        // component (which would undo a user-initiated reset or clear), and just
+        // run the lightweight path instead.
+        const isReferenceMode = Boolean(resolveReferenceNumber(host, controller.sources));
+        if (isReferenceMode && component.currentStep !== 3) {
+          component.currentStep = 3;
+        }
+        maybeRefreshAddressResults(host, component, isReferenceMode);
+        syncGravityFormFields(component, controller.sources);
+        return;
+      }
       syncPrefill(host, component, controller.sources);
-      controller.lastSourceSignature = getSourceSignature(controller.sources);
     }, 120);
     controller.sync = sync;
     host[controllerKey] = controller;

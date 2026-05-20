@@ -34,6 +34,8 @@ The components in this starter are:
 ```bash
 npm run build:components
 npm run watch:components
+npm run build:wordpress-iet
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller
 ```
 
 `build:components` writes:
@@ -41,6 +43,92 @@ npm run watch:components
 - `dist/components/byda-components.esm.js`
 - `dist/components/byda-components.js`
 - `public/components/byda-components.js`
+
+`build:wordpress-iet` writes:
+
+- `wordpress/byda-iet/assets/js/byda-components.js`
+- `wordpress/byda-iet/assets/js/byda-components.js.map`
+- `wordpress/byda-iet.zip`
+
+## Exporting to WordPress
+
+There are two export paths:
+
+- The WordPress plugin zip, which is uploaded to WordPress.
+- The poller Docker image, which is deployed separately when WordPress should call an external BYDA credential proxy.
+
+### Plugin zip
+
+Requirements:
+
+- Node.js 20 or newer
+- npm dependencies installed with `npm install`
+- PowerShell with `Compress-Archive` available
+- write access to `wordpress/`
+
+Build the uploadable plugin package:
+
+```bash
+npm run build:wordpress-iet
+```
+
+Upload `wordpress/byda-iet.zip` in WordPress Admin under **Plugins > Add New Plugin > Upload Plugin**.
+
+This command rebuilds the component bundle first, copies it into `wordpress/byda-iet/assets/js/`, then creates the zip. Use this whenever component source or WordPress plugin files change.
+
+### Poller Docker image
+
+Requirements:
+
+- Docker Desktop or Docker Engine installed and running
+- a Docker Hub repository such as `your-dockerhub-user/byda-iet-poller`
+- `docker login` completed for the account that can push to that repository
+- Node.js 20 or newer
+- npm dependencies installed with `npm install`
+- network access to Docker Hub so the script can read existing tags
+
+Build, tag, and push the external poller image:
+
+```bash
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller
+```
+
+The script publishes the next `vN` tag and also updates `latest`. For example, if Docker Hub already has `v1`, it publishes `v2`.
+
+Useful variants:
+
+```bash
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller --dry-run
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller --tag v1
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller --no-push
+npm run publish:poller-docker -- --image your-dockerhub-user/byda-iet-poller --no-latest
+```
+
+You can also store Docker Hub settings in the repo-root `.env`:
+
+```bash
+DOCKER_IMAGE=your-dockerhub-user/byda-iet-poller
+DOCKERHUB_USERNAME=your-dockerhub-user
+DOCKERHUB_TOKEN=your-dockerhub-access-token
+```
+
+With `DOCKER_IMAGE` set:
+
+```bash
+npm run publish:poller-docker
+```
+
+Runtime requirements for the deployed poller container:
+
+- `PORT`
+- `SHARED_SECRET`
+- `BYDA_ENVIRONMENT`
+- `BYDA_CLIENT_ID`
+- `BYDA_CLIENT_SECRET`
+- optional `BYDA_BASE_URL` if overriding the environment default
+- optional DigitalOcean Spaces variables if private report storage is enabled
+
+Set the same `SHARED_SECRET` and the poller base URL in the WordPress plugin settings. See `poller/README.md` for the full runtime environment list.
 
 ## Usage
 

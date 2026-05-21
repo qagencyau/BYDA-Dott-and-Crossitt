@@ -23,21 +23,25 @@ async function main() {
   await copyFile(sourceMap, targetMap);
   await rm(zipPath, { force: true });
 
-  const escapedPluginDir = pluginDir.replace(/'/g, "''");
-  const escapedZipPath = zipPath.replace(/'/g, "''");
-
-  execFileSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${escapedPluginDir}' -DestinationPath '${escapedZipPath}' -Force`,
-    ],
-    {
-      cwd: rootDir,
-      stdio: "inherit",
-    },
-  );
+  if (process.platform === "win32") {
+    const escapedPluginDir = pluginDir.replace(/'/g, "''");
+    const escapedZipPath = zipPath.replace(/'/g, "''");
+    execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Compress-Archive -Path '${escapedPluginDir}' -DestinationPath '${escapedZipPath}' -Force`,
+      ],
+      { cwd: rootDir, stdio: "inherit" },
+    );
+  } else {
+    execFileSync(
+      "zip",
+      ["-r", zipPath, path.basename(pluginDir)],
+      { cwd: path.dirname(pluginDir), stdio: "inherit" },
+    );
+  }
 
   console.log(`Built WordPress plugin zip: ${zipPath}`);
 }

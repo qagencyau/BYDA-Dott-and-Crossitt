@@ -55,7 +55,6 @@ const USER_COPY = {
     continue: "Continue",
     restart: "Start again",
     searchAgain: "Search again",
-    search: "Search",
     choose: "Use This Site",
     chosen: "Selected",
     use: "Use",
@@ -1431,9 +1430,6 @@ export class BydaProcessSteps extends HTMLElement {
           <input class="control" data-scope="address" name="searchText" value="${escapeHtml(a.searchText || formatAddressLabel(a))}" placeholder="${USER_COPY.search.fullAddressPlaceholder}" autocomplete="street-address" />
         </label>
         ${parsedSummary ? `<p class="summary-help">Parsed as ${escapeHtml(parsedSummary)}.</p>` : ""}
-        <div class="button-row">
-          <button class="button primary" type="button" data-action="search-address">${USER_COPY.buttons.search}</button>
-        </div>
       `;
     return `
       ${addressSummary}
@@ -1640,7 +1636,6 @@ export class BydaProcessSteps extends HTMLElement {
     }
     if (action === "reset") { this.reset(); return; }
     if (action === "complete") { void this.completeFlow(); return; }
-    if (action === "search-address") { this.searchCandidates(); return; }
     if (action === "manual-address") {
       this.manualAddressEntry = true;
       this.setAttribute("manual-address-override", "true");
